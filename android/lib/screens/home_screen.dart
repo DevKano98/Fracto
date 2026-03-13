@@ -76,9 +76,20 @@ class _HomeScreenState extends State<HomeScreen> {
     _serviceStarted = true;
 
     // Request notification permission (Android 13+)
-    await Permission.notification.request();
-    // Request microphone (needed for voice input + foreground service type)
-    await Permission.microphone.request();
+    final notifStatus = await Permission.notification.request();
+    // Request microphone
+    final micStatus = await Permission.microphone.request();
+
+    if (notifStatus.isDenied || micStatus.isDenied) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Permissions required for full functionality'),
+            action: SnackBarAction(label: 'Settings', onPressed: openAppSettings),
+          ),
+        );
+      }
+    }
 
     final running = await FractaBackgroundService.isRunning;
     if (!running) await FractaBackgroundService.start();
@@ -87,7 +98,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final wasOn = await OverlayService.wasBubbleEnabled;
     if (wasOn) {
       final hasPerm = await OverlayService.hasPermission;
-      if (hasPerm) await OverlayService.showBubble();
+      if (hasPerm) {
+        await OverlayService.showBubble();
+      } else {
+        // pro-actively request if it was enabled but permission lost
+        await OverlayService.requestPermission();
+      }
     }
   }
 

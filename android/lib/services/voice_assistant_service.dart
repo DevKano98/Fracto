@@ -89,13 +89,13 @@ class VoiceAssistantService extends ChangeNotifier {
 
     _setState(VoiceAssistantState.idle);
 
-    _speechSubscription = await _speech.listen(
+    await _speech.listen(
       onResult: (result) {
         final text = result.recognizedWords.toLowerCase();
-        print('Speech recognized: "$text"'); // Debug log
-        print('Wake phrase: "$wakePhrase"'); // Debug log
+        debugPrint('Speech recognized: "$text"'); // Use debugPrint
+        debugPrint('Wake phrase: "$wakePhrase"'); 
         if (text.contains(wakePhrase)) {
-          print('Wake phrase detected!'); // Debug log
+          debugPrint('Wake phrase detected!'); 
           _onWakeDetected();
         }
       },
@@ -107,7 +107,7 @@ class VoiceAssistantService extends ChangeNotifier {
   }
 
   void _onWakeDetected() {
-    _speechSubscription?.cancel();
+    _speech.stop(); // Stop current listening
     _setState(VoiceAssistantState.woken);
     _speakPrompt();
   }
@@ -162,7 +162,7 @@ class VoiceAssistantService extends ChangeNotifier {
       );
 
       request.files.add(http.MultipartFile.fromBytes(
-        'audio',
+        'file',
         bytes,
         filename: 'voice_claim.m4a',
       ));

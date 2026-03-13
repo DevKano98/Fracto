@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 os.environ["REPLICATE_API_TOKEN"] = settings.REPLICATE_API_TOKEN
 
-SDXL_MODEL = "stability-ai/sdxl:39ed52f2319f9b4e0436ea9de02823f89de39c44"
+SDXL_MODEL = "google/imagen-4"  # Updated to Imagen 4 for better image quality
 
 
 async def auto_generate_blog(claim_data: dict) -> dict | None:
@@ -34,23 +34,35 @@ async def auto_generate_blog(claim_data: dict) -> dict | None:
         slug = blog_content.get("slug", "")
         image_prompt = blog_content.get("image_prompt", "India fact-check journalism illustration")
 
-        # Step 2: Generate image via Replicate SDXL
+        # Step 2: Generate image via Replicate
         image_bytes = b""
         try:
+            logger.info("Generating image with prompt: %s", image_prompt)
             output = replicate.run(
                 SDXL_MODEL,
                 input={
                     "prompt": image_prompt,
                     "negative_prompt": "text, words, letters, watermark, logo",
-                    "width": 1200,
-                    "height": 630,
                     "num_outputs": 1,
+                    "scheduler": "K_EULER",
+                    "num_inference_steps": 50,
+                    "guidance_scale": 7.5,
                 },
             )
-            image_url_from_replicate = output[0] if output else None
+            logger.info("Replicate output: %s", output)
+            
+            # Handle list or string output
+            image_url_from_replicate = None
+            if isinstance(output, list) and len(output) > 0:
+                image_url_from_replicate = output[0]
+            elif isinstance(output, str):
+                image_url_from_replicate = output
+            elif isinstance(output, dict):
+                image_url_from_replicate = output.get("url")
 
             # Step 3: Download image bytes
             if image_url_from_replicate:
+                logger.info("Downloading image from: %s", image_url_from_replicate)
                 resp = requests.get(image_url_from_replicate, timeout=30)
                 resp.raise_for_status()
                 image_bytes = resp.content

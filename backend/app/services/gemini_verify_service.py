@@ -9,15 +9,17 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 import google.generativeai as genai
+from google.api_core.exceptions import ResourceExhausted
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=settings.GEMINI_KEY_2)
-_verify_model = genai.GenerativeModel("gemini-3-flash-preview")
+_verify_model = genai.GenerativeModel("gemini-2.0-flash")  # Updated to stable model
 
 SYSTEM_INSTRUCTION = """You are Fracta, India's AI misinformation defense system.
 Analyze the given claim. Use available tools to find evidence.
@@ -135,22 +137,41 @@ async def verify_claim(
     )
 
     loop = asyncio.get_event_loop()
-    try:
-        response = await loop.run_in_executor(
-            None, lambda: _verify_model.generate_content(prompt)
-        )
-        raw = response.text.strip()
-        parsed = _parse_verification(raw)
-    except Exception as e:
-        logger.error(f"Gemini API error: {e}")
-        # Return a fallback response when API fails
-        parsed = {
-            "verdict": "UNVERIFIED",
-            "confidence": 0.0,
-            "evidence": "Service temporarily unavailable due to API limits",
-            "sources": [],
-            "reasoning_steps": ["API quota exceeded or service error"],
-            "corrective_response": "Please try again later. Service is experiencing high demand.",
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = await loop.run_in_executor(
+                None, lambda: _verify_model.generate_content(prompt)
+            )
+            raw = response.text.strip()
+            parsed = _parse_verification(raw)
+            break  # Success, exit retry loop
+        except ResourceExhausted as e:
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 1.0  # Exponential backoff
+                logger.warning(f"Gemini quota exceeded, retrying in {wait_time}s (attempt {attempt+1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"Gemini API quota exhausted after {max_retries} attempts: {e}")
+                parsed = {
+                    "verdict": "UNVERIFIED",
+                    "confidence": 0.0,
+                    "evidence": "API quota exceeded",
+                    "sources": [],
+                    "reasoning_steps": ["API rate limit reached"],
+                    "corrective_response": "Unable to verify due to service limits",
+                }
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            parsed = {
+                "verdict": "UNVERIFIED",
+                "confidence": 0.0,
+                "evidence": "API error occurred",
+                "sources": [],
+                "reasoning_steps": ["Technical error during verification"],
+                "corrective_response": "Verification failed due to technical issues",
+            }
+            break
         }
 
     if rag_sources_for_response:
