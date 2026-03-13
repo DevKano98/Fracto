@@ -71,17 +71,27 @@ class Settings:
     YOUTUBE_API_KEY: str = os.getenv("YOUTUBE_API_KEY", "")
 
     def __init__(self):
+        # Only block startup if absolutely critical vars missing
         required = [
-            "GEMINI_KEY_1", "GEMINI_KEY_2", "SARVAM_API_KEY",
             "SUPABASE_URL", "SUPABASE_ANON_KEY", "APP_SECRET_KEY",
-            "CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET",
-            "REPLICATE_API_TOKEN", "UPSTASH_REDIS_URL", "UPSTASH_REDIS_TOKEN",
-            "GROQ_API_KEY"
+            "GEMINI_KEY_1", "GEMINI_KEY_2",
         ]
         missing = [k for k in required if not getattr(self, k)]
         if missing:
             raise RuntimeError(
                 f"Missing required environment variables: {', '.join(missing)}"
+            )
+        # Optional services — log warnings, do not crash
+        optional_missing = []
+        for k in ["SARVAM_API_KEY", "CLOUDINARY_CLOUD_NAME", "REPLICATE_API_TOKEN",
+                  "UPSTASH_REDIS_URL", "UPSTASH_REDIS_TOKEN", "GROQ_API_KEY"]:
+            if not getattr(self, k):
+                optional_missing.append(k)
+        if optional_missing:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Optional services not configured: %s. Voice/cache/blog may be limited.",
+                ", ".join(optional_missing),
             )
 
         # Warn if no Qwen backend configured

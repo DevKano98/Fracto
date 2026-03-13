@@ -86,6 +86,9 @@ class SarvamService:
         """
         Convert speech audio to text using Sarvam STT.
         """
+        if not settings.SARVAM_API_KEY:
+            logger.warning("Sarvam API key not configured, skipping STT")
+            return ""
 
         if not audio_bytes:
             return ""
@@ -97,9 +100,11 @@ class SarvamService:
         files = {"file": (filename, audio_bytes, content_type)}
 
         data = {
-            "language_code": language,
             "model": "saaras:v3",
+            "mode": "transcribe",
         }
+        if language:
+            data["language_code"] = language
 
         result = await self._post_with_retry(
             f"{SARVAM_BASE}/speech-to-text",
@@ -118,6 +123,9 @@ class SarvamService:
         """
         Convert text to speech using Sarvam TTS.
         """
+        if not settings.SARVAM_API_KEY:
+            logger.warning("Sarvam API key not configured, skipping TTS")
+            return b""
 
         if not text:
             return b""
@@ -128,11 +136,11 @@ class SarvamService:
         speaker = VOICE_MAP.get(language, VOICE_MAP["default"])
 
         payload = {
-            "input": text,
+            "text": text,
             "target_language_code": language,
             "speaker": speaker,
             "model": "bulbul:v3",
-            "speech_sample_rate": 22050,
+            "speech_sample_rate": 24000,
         }
 
         result = await self._post_with_retry(
@@ -192,4 +200,39 @@ class SarvamService:
         await self.client.aclose()
 
 
-sarvam_service = SarvamService()
+def _fallback_lang(text: str) -> str:
+    if not text:
+        return "en-IN"
+    devanagari = sum(1 for ch in text if "\u0900" <= ch <= "\u097F")
+    return "hi-IN" if devanagari > len(text) * 0.2 else "en-IN"
+
+
+_sarvam: SarvamService | None = None
+
+try:
+    _sarvam = SarvamService()
+except Exception as e:
+    logger.warning("SarvamService init failed: %s. Voice features disabled.", e)
+
+
+async def detect_language(text: str) -> str:
+    if _sarvam:
+        return await _sarvam.detect_language(text)
+    return _fallback_lang(text)
+
+
+async def speech_to_text(
+    audio_bytes: bytes,
+    language: str = "hi-IN",
+    filename: str = "audio.wav",
+    content_type: str = "audio/wav",
+) -> str:
+    if _sarvam:
+        return await _sarvam.speech_to_text(audio_bytes, language, filename, content_type)
+    return ""
+
+
+async def text_to_speech(text: str, language: str = "hi-IN") -> bytes:
+    if _sarvam:
+        return await _sarvam.text_to_speech(text, language)
+    return b""

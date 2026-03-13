@@ -62,6 +62,27 @@ class ClaimModel {
     required this.createdAt,
   });
 
+  static int? _parseEstimatedReach(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toInt();
+    final s = value.toString().trim();
+    if (s.isEmpty) return null;
+    // Backend may return "1.2K", "500", etc.
+    final lower = s.toLowerCase();
+    num mult = 1;
+    String numPart = s;
+    if (lower.endsWith('k')) {
+      mult = 1000;
+      numPart = s.substring(0, s.length - 1);
+    } else if (lower.endsWith('m')) {
+      mult = 1000000;
+      numPart = s.substring(0, s.length - 1);
+    }
+    final parsed = double.tryParse(numPart.replaceAll(',', ''));
+    if (parsed == null) return null;
+    return (parsed * mult).round();
+  }
+
   factory ClaimModel.fromJson(Map<String, dynamic> json) {
     return ClaimModel(
       id: json['id']?.toString() ?? '',
@@ -90,7 +111,7 @@ class ClaimModel {
       status: json['status']?.toString(),
       viralityScore: (json['virality_score'] as num?)?.toDouble(),
       viralityLevel: json['virality_level']?.toString(),
-      estimatedReach: (json['estimated_reach'] as num?)?.toInt(),
+      estimatedReach: _parseEstimatedReach(json['estimated_reach']),
       socialThreatScore: (json['social_threat_score'] as num?)?.toDouble(),
       ragSourcesCount: (json['rag_sources_count'] as num?)?.toInt(),
       isDuplicate: json['is_duplicate'] as bool?,

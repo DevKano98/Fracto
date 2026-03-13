@@ -337,7 +337,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final authProvider = context.read<AuthProvider>();
-    String? accessToken = await authProvider.getAccessToken();
+    String? accessToken = await authProvider.refreshIfNeeded() ?? await authProvider.getAccessToken();
 
     // Read bytes if needed
     List<int>? imageBytes;

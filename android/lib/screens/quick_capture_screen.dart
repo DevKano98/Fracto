@@ -18,6 +18,7 @@ import 'package:path_provider/path_provider.dart';
 import '../constants.dart';
 import '../models/claim_model.dart';
 import '../providers/auth_provider.dart';
+import '../providers/claim_provider.dart';
 import '../services/background_service.dart';
 import '../theme.dart';
 import '../widgets/verdict_badge.dart';
@@ -141,15 +142,34 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen>
     });
 
     final authProvider = context.read<AuthProvider>();
-    final token = await authProvider.getAccessToken();
+    final token = await authProvider.refreshIfNeeded() ?? await authProvider.getAccessToken();
 
-    // For voice, submit via provider directly
+    // For voice, use ClaimProvider directly (background service has no voice support)
     if (_mode == _CaptureMode.voice) {
       if (_recordingPath == null) return;
       final bytes = await File(_recordingPath!).readAsBytes();
-      // Dispatch to background service for in-isolate processing
-      // The verdict will arrive via verdictStream
-      // For now fall through to direct API call via provider
+      final claimProvider = context.read<ClaimProvider>();
+      final claim = await claimProvider.verifyClaim(
+        type: InputType.voice,
+        audioBytes: bytes,
+        audioFilename: 'recording.m4a',
+        platform: 'unknown',
+        shares: 0,
+        accessToken: token,
+      );
+      if (!mounted) return;
+      if (claim != null) {
+        setState(() {
+          _result = claim;
+          _state = _VerifyState.done;
+        });
+      } else {
+        setState(() {
+          _errorMsg = claimProvider.error ?? 'Voice verification failed';
+          _state = _VerifyState.error;
+        });
+      }
+      return;
     }
 
     // For text/URL, dispatch to background service

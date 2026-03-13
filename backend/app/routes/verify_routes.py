@@ -32,7 +32,25 @@ from app.models.claim_model import ClaimInput, ClaimResponse
 from app.services.gemini_ocr_service import process_image, scrape_url
 from app.services.gemini_verify_service import verify_claim
 from app.services.risk_scorer import compute_risk
-from app.services.sarvam_service import detect_language, speech_to_text, text_to_speech
+try:
+    from app.services.sarvam_service import (
+        detect_language,
+        speech_to_text,
+        text_to_speech,
+    )
+except ImportError as e:
+    logging.getLogger(__name__).warning(
+        "Sarvam service unavailable: %s. Voice verification will use fallbacks.", e
+    )
+
+    async def detect_language(text: str) -> str:
+        return "en-IN" if text and any(ord(c) < 128 for c in text[:50]) else "hi-IN"
+
+    async def speech_to_text(*_, **__) -> str:
+        return ""
+
+    async def text_to_speech(*_, **__) -> bytes:
+        return b""
 from app.services.qwen_scraper import gather_evidence_free as gather_evidence
 from app.services.groq_service import (
     translate_to_english,
@@ -55,6 +73,8 @@ limiter = Limiter(key_func=get_remote_address)
 # Redis helpers (Upstash REST)
 # ---------------------------------------------------------------------------
 def _redis_get(key: str):
+    if not settings.UPSTASH_REDIS_URL or not settings.UPSTASH_REDIS_TOKEN:
+        return None
     try:
         resp = http_requests.get(
             f"{settings.UPSTASH_REDIS_URL}/get/{key}",
@@ -67,6 +87,8 @@ def _redis_get(key: str):
 
 
 def _redis_set(key: str, value: str, ex: int = 3600):
+    if not settings.UPSTASH_REDIS_URL or not settings.UPSTASH_REDIS_TOKEN:
+        return
     try:
         http_requests.post(
             f"{settings.UPSTASH_REDIS_URL}/set/{key}/{value}/ex/{ex}",
@@ -107,9 +129,63 @@ async def _run_full_pipeline(
     extra_signals: Optional[dict] = None,
     current_user: Optional[dict] = None,
 ) -> dict:
+    try:
+        return await _run_full_pipeline_impl(
+            raw_text, source_type, platform, shares,
+            visual_flags, visual_context, language, extra_signals, current_user,
+        )
+    except Exception as exc:
+        logger.exception("Pipeline failed: %s", exc)
+        return {
+            "raw_text": raw_text,
+            "extracted_claim": raw_text[:500],
+            "source_type": source_type,
+            "platform": platform,
+            "language": language or "en-IN",
+            "ml_category": "UNKNOWN",
+            "ml_confidence": 0.5,
+            "llm_verdict": "UNVERIFIED",
+            "llm_confidence": 0.0,
+            "evidence": "Verification pipeline error",
+            "sources": [],
+            "reasoning_steps": ["A temporary error occurred. Please try again."],
+            "corrective_response": "We couldn't verify this claim right now. Please try again in a moment.",
+            "risk_score": 5.0,
+            "risk_level": "MEDIUM",
+            "visual_flags": list(visual_flags),
+            "status": "PENDING",
+            "submitted_by": current_user["id"] if current_user else None,
+            "id": None,
+            "created_at": None,
+            "conflict_flag": False,
+            "govt_source_corroborated": False,
+            "virality_score": 0.0,
+            "virality_level": "low",
+            "estimated_reach": "0",
+            "social_threat_score": 0.0,
+            "social_recommended_action": "retry",
+            "rag_sources_count": 0,
+            "is_duplicate": False,
+        }
 
+
+async def _run_full_pipeline_impl(
+    raw_text: str,
+    source_type: str,
+    platform: str,
+    shares: int,
+    visual_flags: list,
+    visual_context: dict,
+    language: Optional[str],
+    extra_signals: Optional[dict],
+    current_user: Optional[dict],
+) -> dict:
     # 1. Duplicate detection — skip pipeline if near-duplicate found
-    duplicate = duplicate_clusterer.find_duplicate(raw_text)
+    duplicate = None
+    try:
+        duplicate = duplicate_clusterer.find_duplicate(raw_text)
+    except Exception as exc:
+        logger.debug("Duplicate detection failed: %s", exc)
     if duplicate:
         logger.info("Near-duplicate claim detected, returning existing result.")
         result = dict(duplicate)
@@ -117,25 +193,43 @@ async def _run_full_pipeline(
         result["duplicate_similarity"] = duplicate.get("similarity_score", 0)
         return result
 
-    # 2. Language detection first (needed for translation)
+    # 2. Language detection
     if not language:
-        language = detect_language(raw_text)
+        try:
+            language = await detect_language(raw_text)
+        except Exception as exc:
+            logger.debug("Language detection failed: %s", exc)
+            language = "en-IN"
 
     # 2b. Groq: translate non-English to English for ML classifier
     text_for_ml = raw_text
     if language and not language.startswith("en"):
         text_for_ml = await translate_to_english(raw_text)
 
-    # 2c. Groq: extract core checkable claim from long text
+    # 2c. Groq: extract core claim from long text
     extracted_claim = raw_text
     if len(raw_text) > 300:
         extracted_claim = await extract_core_claim(raw_text)
 
     # 3. ML classify (on English text)
-    ml_result = classify_claim(text_for_ml)
+    try:
+        ml_result = classify_claim(text_for_ml)
+    except Exception as exc:
+        logger.warning("ML classify failed: %s", exc)
+        ml_result = {"category": "UNKNOWN", "confidence": 0.5}
 
-    # 4. RAG — gather web evidence in parallel with nothing else blocking
-    rag_evidence = await gather_evidence(raw_text, language)
+    # 4. RAG — gather web evidence
+    try:
+        rag_evidence = await asyncio.wait_for(
+            gather_evidence(raw_text, language),
+            timeout=45,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("RAG evidence gather timed out")
+        rag_evidence = {"evidence_summary": "", "has_govt_source": False, "has_factchecker_source": False}
+    except Exception as exc:
+        logger.warning("RAG evidence failed: %s", exc)
+        rag_evidence = {"evidence_summary": "", "has_govt_source": False, "has_factchecker_source": False}
 
     # 5. LLM verification with RAG context injected
     verification = await verify_claim(
@@ -184,8 +278,11 @@ async def _run_full_pipeline(
         reddit_upvotes=es.get("reddit_upvotes", 0),
     )
 
-    # 10. Record for trend detection
-    trend_detector.record_claim_category(ml_result["category"], platform)
+    # 10. Record for trend detection (non-critical)
+    try:
+        trend_detector.record_claim_category(ml_result["category"], platform)
+    except Exception as exc:
+        logger.debug("Trend record failed: %s", exc)
 
     # 11. Assemble and save
     claim_data = {
@@ -209,9 +306,14 @@ async def _run_full_pipeline(
         "submitted_by": current_user["id"] if current_user else None,
     }
 
-    saved = insert_claim(claim_data)
-    claim_data["id"] = saved.get("id")
-    claim_data["created_at"] = saved.get("created_at")
+    try:
+        saved = insert_claim(claim_data)
+        claim_data["id"] = saved.get("id")
+        claim_data["created_at"] = saved.get("created_at")
+    except Exception as exc:
+        logger.error("DB insert_claim failed: %s", exc)
+        claim_data["id"] = None
+        claim_data["created_at"] = None
 
     # Attach enrichment data (not stored in DB, returned in response)
     claim_data["conflict_flag"] = verification.get("conflict_flag", False)
@@ -257,8 +359,14 @@ async def verify_text(
     )
 
     from app.services.blog_generator import auto_generate_blog
-    asyncio.create_task(auto_generate_blog(result))
 
+    async def _safe_blog_task(r):
+        try:
+            await auto_generate_blog(r)
+        except Exception as exc:
+            logger.exception("Background blog generation failed: %s", exc)
+
+    asyncio.create_task(_safe_blog_task(result))
     _redis_set(cache_key, _safe_json(result))
     return ClaimResponse(**result)
 
@@ -295,20 +403,33 @@ async def verify_image(
     )
 
     from app.services.blog_generator import auto_generate_blog
-    asyncio.create_task(auto_generate_blog(result))
+
+    async def _safe_blog_task(r):
+        try:
+            await auto_generate_blog(r)
+        except Exception as exc:
+            logger.exception("Background blog generation failed: %s", exc)
+
+    asyncio.create_task(_safe_blog_task(result))
     return ClaimResponse(**result)
+
+
+class UrlVerifyInput(BaseModel):
+    url: str
+    platform: str = "unknown"
+    shares: int = 0
 
 
 @router.post("/url", response_model=ClaimResponse)
 @limiter.limit("20/minute")
 async def verify_url(
     request: Request,
-    url: str = Form(...),
-    platform: str = Form(default="unknown"),
-    shares: int = Form(default=0),
+    body: UrlVerifyInput,
     current_user: Optional[dict] = Depends(get_optional_user)
 ):
-    cache_key = _cache_key(url)
+    """Accepts JSON: {url, platform?, shares?} — matches Flutter ApiService and BackgroundService."""
+    url_val, platform_val, shares_val = body.url, body.platform, body.shares
+    cache_key = _cache_key(url_val)
     cached = _redis_get(cache_key)
     if cached:
         try:
@@ -316,22 +437,28 @@ async def verify_url(
         except Exception:
             pass
 
-    scraped = scrape_url(url)
-    raw_text = scraped.get("text", "") or f"Content from {url}"
+    scraped = scrape_url(url_val)
+    raw_text = scraped.get("text", "") or f"Content from {url_val}"
 
     result = await _run_full_pipeline(
         raw_text=raw_text,
         source_type="url",
-        platform=platform,
-        shares=shares,
+        platform=platform_val,
+        shares=shares_val,
         visual_flags=[],
         visual_context={},
         current_user=current_user,
     )
 
     from app.services.blog_generator import auto_generate_blog
-    asyncio.create_task(auto_generate_blog(result))
 
+    async def _safe_blog_task(r):
+        try:
+            await auto_generate_blog(r)
+        except Exception as exc:
+            logger.exception("Background blog generation failed: %s", exc)
+
+    asyncio.create_task(_safe_blog_task(result))
     _redis_set(cache_key, _safe_json(result))
     return ClaimResponse(**result)
 
@@ -346,8 +473,8 @@ async def verify_voice(
     current_user: Optional[dict] = Depends(get_optional_user)
 ):
     audio_bytes = await file.read()
-    transcript = speech_to_text(audio_bytes, language, filename=file.filename, content_type=file.content_type) or "Could not transcribe audio"
-    detected_lang = detect_language(transcript) if transcript else language
+    transcript = await speech_to_text(audio_bytes, language, filename=file.filename, content_type=file.content_type) or "Could not transcribe audio"
+    detected_lang = await detect_language(transcript) if transcript else language
 
     result = await _run_full_pipeline(
         raw_text=transcript,
@@ -363,13 +490,20 @@ async def verify_voice(
     corrective = result.get("corrective_response", "")
     ai_audio_b64 = ""
     if corrective:
-        tts_bytes = text_to_speech(corrective, detected_lang)
+        tts_bytes = await text_to_speech(corrective, detected_lang)
         if tts_bytes:
             ai_audio_b64 = base64.b64encode(tts_bytes).decode("utf-8")
     result["ai_audio_b64"] = ai_audio_b64
 
     from app.services.blog_generator import auto_generate_blog
-    asyncio.create_task(auto_generate_blog(result))
+
+    async def _safe_blog_task(r):
+        try:
+            await auto_generate_blog(r)
+        except Exception as exc:
+            logger.exception("Background blog generation failed: %s", exc)
+
+    asyncio.create_task(_safe_blog_task(result))
     return ClaimResponse(**result)
 
 

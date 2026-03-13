@@ -240,7 +240,7 @@ class ApiService {
   /// =============================
 
   Future<List<Map<String, dynamic>>> getFeed({
-    required String token,
+    String? token,
     int limit = 20,
     int offset = 0,
   }) async {
@@ -250,9 +250,10 @@ class ApiService {
       token: token,
     );
 
-    final list = data["data"] ?? data;
-
-    return (list as List).cast<Map<String, dynamic>>();
+    // Backend returns {"claims": [...], "count": N}
+    final list = data["claims"];
+    if (list == null || list is! List) return [];
+    return list.cast<Map<String, dynamic>>();
   }
 
   /// =============================

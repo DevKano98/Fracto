@@ -14,7 +14,8 @@ from app.services.gemini_verify_service import generate_blog_content
 
 logger = logging.getLogger(__name__)
 
-os.environ["REPLICATE_API_TOKEN"] = settings.REPLICATE_API_TOKEN
+if settings.REPLICATE_API_TOKEN:
+    os.environ["REPLICATE_API_TOKEN"] = settings.REPLICATE_API_TOKEN
 
 IMAGE_MODEL = "google/imagen-4"
 
@@ -48,22 +49,27 @@ async def _download_image(url: str) -> bytes:
 
 
 async def _generate_image(prompt: str) -> bytes:
-
+    """Run blocking replicate.run in executor to avoid blocking event loop."""
+    loop = asyncio.get_event_loop()
     retries = 2
 
     for attempt in range(retries):
-
         try:
-
-            output = replicate.run(
-                IMAGE_MODEL,
-                input={
-                    "prompt": prompt,
-                    "negative_prompt": IMAGE_NEGATIVE_PROMPT,
-                    "num_outputs": 1,
-                    "guidance_scale": 7.5,
-                    "num_inference_steps": 50,
-                },
+            output = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: replicate.run(
+                        IMAGE_MODEL,
+                        input={
+                            "prompt": prompt,
+                            "negative_prompt": IMAGE_NEGATIVE_PROMPT,
+                            "num_outputs": 1,
+                            "guidance_scale": 7.5,
+                            "num_inference_steps": 50,
+                        },
+                    ),
+                ),
+                timeout=120,
             )
 
             image_url = None
@@ -82,12 +88,13 @@ async def _generate_image(prompt: str) -> bytes:
 
             return await _download_image(image_url)
 
+        except asyncio.TimeoutError:
+            logger.warning("Replicate image gen timed out")
         except Exception as exc:
-
             logger.error("Replicate generation error: %s", exc)
 
-            if attempt < retries - 1:
-                await asyncio.sleep(2)
+        if attempt < retries - 1:
+            await asyncio.sleep(2)
 
     return b""
 

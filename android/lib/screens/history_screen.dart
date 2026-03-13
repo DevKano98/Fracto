@@ -49,7 +49,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     if (!auth.isLoggedIn) return;
 
-    final token = await auth.getAccessToken();
+    final token = await auth.refreshIfNeeded() ?? await auth.getAccessToken();
 
     if (token == null || token.isEmpty) return;
 

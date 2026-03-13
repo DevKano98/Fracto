@@ -147,6 +147,23 @@ void _onServiceStart(ServiceInstance service) async {
   String? token;
   DateTime? tokenExpiry;
 
+  bool _isTokenExpired(String? t) {
+    if (t == null || t.isEmpty) return true;
+    try {
+      final parts = t.split('.');
+      if (parts.length != 3) return true;
+      var payload = parts[1];
+      while (payload.length % 4 != 0) payload += '=';
+      final decoded = utf8.decode(base64Url.decode(payload));
+      final json = jsonDecode(decoded) as Map<String, dynamic>;
+      final exp = json['exp'] as num?;
+      if (exp == null) return true;
+      return DateTime.now().millisecondsSinceEpoch ~/ 1000 >= exp.toInt();
+    } catch (_) {
+      return true;
+    }
+  }
+
   Future<String?> getToken() async {
     if (token != null &&
         tokenExpiry != null &&
@@ -156,8 +173,34 @@ void _onServiceStart(ServiceInstance service) async {
 
     token = await storage.read(key: AppConstants.accessTokenKey);
 
-    tokenExpiry = DateTime.now().add(const Duration(minutes: 30));
+    if (_isTokenExpired(token)) {
+      final refresh = await storage.read(key: AppConstants.refreshTokenKey);
+      if (refresh != null && refresh.isNotEmpty) {
+        try {
+          final resp = await http.post(
+            Uri.parse('${AppConstants.baseUrl}/auth/refresh'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'refresh_token': refresh}),
+          );
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            final newAccess = data['access_token']?.toString();
+            final newRefresh = data['refresh_token']?.toString() ?? refresh;
+            if (newAccess != null) {
+              await storage.write(key: AppConstants.accessTokenKey, value: newAccess);
+              await storage.write(key: AppConstants.refreshTokenKey, value: newRefresh);
+              token = newAccess;
+            }
+          }
+        } catch (_) {
+          token = null;
+        }
+      } else {
+        token = null;
+      }
+    }
 
+    tokenExpiry = DateTime.now().add(const Duration(minutes: 25));
     return token;
   }
 

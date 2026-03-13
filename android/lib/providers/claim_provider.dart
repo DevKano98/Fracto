@@ -113,7 +113,7 @@ class ClaimProvider extends ChangeNotifier {
             filename: audioFilename ?? "recording.wav",
             platform: platform,
             shares: shares,
-            accessToken: accessToken,
+            token: accessToken,
           );
 
           break;
@@ -162,16 +162,16 @@ class ClaimProvider extends ChangeNotifier {
 
     try {
       final items = await _apiService.getFeed(
-        accessToken: accessToken,
+        token: accessToken,
         limit: 20,
         offset: _historyOffset,
       );
 
-      final claims = items.map(ClaimModel.fromJson).toList();
+      final List<ClaimModel> claims = items.map(ClaimModel.fromJson).toList();
 
       _history.addAll(claims);
 
-      _historyOffset += claims.length;
+      _historyOffset += claims.length; // Ensure this is treated as int
 
       if (claims.length < 20) {
         _hasMoreHistory = false;
@@ -201,7 +201,7 @@ class ClaimProvider extends ChangeNotifier {
         claimId: claimId,
         reportType: reportType,
         note: note,
-        accessToken: accessToken,
+        token: accessToken,
       );
     } catch (e) {
       _error = "Failed to report claim.";

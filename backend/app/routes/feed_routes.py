@@ -10,8 +10,8 @@ router = APIRouter()
 
 
 @router.get("/")
-async def get_feed_endpoint(limit: int = 50):
-    claims = get_feed(limit=limit)
+async def get_feed_endpoint(limit: int = 50, offset: int = 0):
+    claims = get_feed(limit=limit, offset=offset)
     return {"claims": claims, "count": len(claims)}
 
 

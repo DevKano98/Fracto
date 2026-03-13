@@ -80,11 +80,12 @@ class _ResultScreenState extends State<ResultScreen> {
   }
 
   Future<void> _submitReport() async {
+    if (widget.claim.id.isEmpty) return;
     final authProvider = context.read<AuthProvider>();
     final claimProvider = context.read<ClaimProvider>();
     setState(() => _isSubmittingReport = true);
     try {
-      final token = await authProvider.getAccessToken();
+      final token = await authProvider.refreshIfNeeded() ?? await authProvider.getAccessToken();
       await claimProvider.reportClaim(
         claimId: widget.claim.id,
         reportType: _reportType,
@@ -473,8 +474,8 @@ class _ResultScreenState extends State<ResultScreen> {
                 const SizedBox(height: 24),
               ],
 
-              // ── Report Section ─────────────────────────────────
-              if (!_reportSubmitted)
+              // ── Report Section (only if claim was saved with valid id) ──
+              if (!_reportSubmitted && widget.claim.id.isNotEmpty)
                 Consumer<AuthProvider>(
                   builder: (context, auth, _) {
                     return Column(
