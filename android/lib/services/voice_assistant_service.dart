@@ -38,14 +38,17 @@ class VoiceAssistantService extends ChangeNotifier {
 
   String _assistantName = AppConstants.defaultAssistantName;
   String get assistantName => _assistantName;
-  
+
   // Point 5: Ensure wake phrase is calculated correctly even during load
-  String get wakePhrase => 'hey ${_assistantName.isEmpty ? AppConstants.defaultAssistantName : _assistantName}'.toLowerCase();
+  String get wakePhrase =>
+      'hey ${_assistantName.isEmpty ? AppConstants.defaultAssistantName : _assistantName}'
+          .toLowerCase();
 
   ClaimModel? _lastClaim;
   ClaimModel? get lastClaim => _lastClaim;
 
-  final StreamController<VoiceAssistantState> _stateController = StreamController.broadcast();
+  final StreamController<VoiceAssistantState> _stateController =
+      StreamController.broadcast();
   Stream<VoiceAssistantState> get events => _stateController.stream;
 
   bool _isSpeechAvailable = false;
@@ -66,7 +69,8 @@ class VoiceAssistantService extends ChangeNotifier {
 
   Future<void> _loadAssistantName() async {
     final prefs = await SharedPreferences.getInstance();
-    _assistantName = prefs.getString(AppConstants.assistantNameKey) ?? AppConstants.defaultAssistantName;
+    _assistantName = prefs.getString(AppConstants.assistantNameKey) ??
+        AppConstants.defaultAssistantName;
     notifyListeners();
   }
 
@@ -81,7 +85,7 @@ class VoiceAssistantService extends ChangeNotifier {
     // Point 7: Check Microphone Permission
     final status = await Permission.microphone.request();
     _hasMicPermission = status.isGranted;
-    
+
     if (!_hasMicPermission) {
       print('Microphone permission denied');
       _setState(VoiceAssistantState.error);
@@ -94,14 +98,17 @@ class VoiceAssistantService extends ChangeNotifier {
         print('Speech recognition error: $error');
         // Point 14: Recover to idle on error
         if (_state == VoiceAssistantState.idle) {
-           _setState(VoiceAssistantState.error);
-           Future.delayed(const Duration(seconds: 3), () => _setState(VoiceAssistantState.idle));
+          _setState(VoiceAssistantState.error);
+          Future.delayed(const Duration(seconds: 3),
+              () => _setState(VoiceAssistantState.idle));
         }
       },
       onStatus: (status) {
         print('Speech recognition status: $status');
         // Point 3: Restart speech after stop if we are idle
-        if (status == 'done' && _state == VoiceAssistantState.idle && !_isManualStop) {
+        if (status == 'done' &&
+            _state == VoiceAssistantState.idle &&
+            !_isManualStop) {
           startListening();
         }
       },
@@ -128,12 +135,14 @@ class VoiceAssistantService extends ChangeNotifier {
         // Point 14: Only check wake phrase on finalResult or if we are idle and it's a solid match
         if (result.finalResult || _state == VoiceAssistantState.idle) {
           final text = result.recognizedWords.toLowerCase();
-          
+
           // Point 9: Robust fuzzy wake logic
-          final hasHey = text.contains('hey') || text.contains('hi') || text.contains('ok');
-          final hasName = text.contains(_assistantName.toLowerCase()) || 
-                          text.contains('fracta') || 
-                          text.contains('factor'); // fuzzy matching
+          final hasHey = text.contains('hey') ||
+              text.contains('hi') ||
+              text.contains('ok');
+          final hasName = text.contains(_assistantName.toLowerCase()) ||
+              text.contains('fracta') ||
+              text.contains('factor'); // fuzzy matching
 
           if (hasHey && hasName) {
             if (result.finalResult) {
@@ -176,7 +185,7 @@ class VoiceAssistantService extends ChangeNotifier {
 
     final tempDir = await getTemporaryDirectory();
     final path = '${tempDir.path}/fracta_assistant_recording.wav';
-    
+
     // Cleanup old file if exists
     final oldFile = File(path);
     if (await oldFile.exists()) await oldFile.delete();
@@ -194,7 +203,8 @@ class VoiceAssistantService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Recorder error: $e');
       _setState(VoiceAssistantState.error);
-      Future.delayed(const Duration(seconds: 2), () => _setState(VoiceAssistantState.idle));
+      Future.delayed(const Duration(seconds: 2),
+          () => _setState(VoiceAssistantState.idle));
     }
 
     _listenTimeout = Timer(const Duration(seconds: 10), () {
@@ -240,18 +250,20 @@ class VoiceAssistantService extends ChangeNotifier {
       } else {
         _setState(VoiceAssistantState.error);
         // Point 20: Path back to idle after error
-        Future.delayed(const Duration(seconds: 3), () => _setState(VoiceAssistantState.idle));
+        Future.delayed(const Duration(seconds: 3),
+            () => _setState(VoiceAssistantState.idle));
       }
     } catch (e) {
       _setState(VoiceAssistantState.error);
-      Future.delayed(const Duration(seconds: 3), () => _setState(VoiceAssistantState.idle));
+      Future.delayed(const Duration(seconds: 3),
+          () => _setState(VoiceAssistantState.idle));
     }
   }
 
   Future<void> _playResponse() async {
     _isManualStop = true;
     await _speech.cancel(); // Point 8: Ensure STT is silent during playback
-    
+
     if (_lastClaim?.aiAudioB64 != null) {
       _setState(VoiceAssistantState.speaking);
       final audioBytes = base64Decode(_lastClaim!.aiAudioB64!);
@@ -259,13 +271,14 @@ class VoiceAssistantService extends ChangeNotifier {
       await _audioPlayer.onPlayerComplete.first;
     } else {
       _setState(VoiceAssistantState.speaking);
-      await _tts.speak(_lastClaim?.correctiveResponse ?? 'Unable to verify the claim.');
+      await _tts.speak(
+          _lastClaim?.correctiveResponse ?? 'Unable to verify the claim.');
       await _tts.awaitSpeakCompletion(true);
     }
 
     _setState(VoiceAssistantState.idle);
     _isManualStop = false;
-    
+
     // Point 6: Recursion recursion guard if already starting
     if (!_speech.isListening) {
       await startListening(); // Point 8: Restart after playback

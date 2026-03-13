@@ -1,77 +1,151 @@
 // ========== FILE: lib/services/overlay_service.dart ==========
 //
-// Manages the floating Fracta bubble that appears over all other apps.
-// When tapped, it opens an overlay quick-capture sheet.
-// After verification, the result card appears as an overlay.
-//
-// Requires: SYSTEM_ALERT_WINDOW permission (draw over other apps)
+// Manages the Fracta floating bubble overlay.
+// Handles permissions, lifecycle, messaging, and persistence.
 
-import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OverlayService {
-  static const _kBubbleEnabledKey = 'fracta_bubble_enabled';
-  
+  static const String _bubbleEnabledKey = "fracta_bubble_enabled";
+
   static SharedPreferences? _prefs;
-  static Future<SharedPreferences> get _getPrefs async => _prefs ??= await SharedPreferences.getInstance();
 
-  /// Request draw-over-apps permission.
+  static Future<SharedPreferences> get _prefsInstance async =>
+      _prefs ??= await SharedPreferences.getInstance();
+
+  /// ─────────────────────────────────────────────
+  /// Permission Handling
+  /// ─────────────────────────────────────────────
+
   static Future<bool> requestPermission() async {
-    final granted = await FlutterOverlayWindow.isPermissionGranted();
-    if (!granted) {
+    try {
+      final granted = await FlutterOverlayWindow.isPermissionGranted();
+
+      if (granted) return true;
+
       await FlutterOverlayWindow.requestPermission();
+
       return await FlutterOverlayWindow.isPermissionGranted();
+    } catch (_) {
+      return false;
     }
-    return true;
   }
 
-  static Future<bool> get hasPermission =>
-      FlutterOverlayWindow.isPermissionGranted();
-
-  /// Show the floating bubble.
-  static Future<void> showBubble() async {
-    final hasPerms = await FlutterOverlayWindow.isPermissionGranted();
-    if (!hasPerms) return;
-
-    await FlutterOverlayWindow.showOverlay(
-      height: 70,
-      width: 70,
-      alignment: OverlayAlignment.centerRight,
-      flag: OverlayFlag.defaultFlag,
-      overlayTitle: 'Fracta',
-      overlayContent: 'Tap to fact-check',
-      enableDrag: true,
-      positionGravity: PositionGravity.auto,
-    );
-    await _saveBubbleEnabled(true);
+  static Future<bool> get hasPermission async {
+    try {
+      return await FlutterOverlayWindow.isPermissionGranted();
+    } catch (_) {
+      return false;
+    }
   }
 
-  /// Hide the floating bubble.
+  /// ─────────────────────────────────────────────
+  /// Overlay Visibility
+  /// ─────────────────────────────────────────────
+
+  static Future<bool> get isBubbleVisible async {
+    try {
+      return await FlutterOverlayWindow.isActive();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// ─────────────────────────────────────────────
+  /// Show Floating Bubble
+  /// ─────────────────────────────────────────────
+
+  static Future<bool> showBubble() async {
+    try {
+      final permission = await requestPermission();
+
+      if (!permission) return false;
+
+      final alreadyActive = await FlutterOverlayWindow.isActive();
+
+      if (alreadyActive) return true;
+
+      await FlutterOverlayWindow.showOverlay(
+        height: 70,
+        width: 70,
+        alignment: OverlayAlignment.centerRight,
+        flag: OverlayFlag.defaultFlag,
+        enableDrag: true,
+        positionGravity: PositionGravity.auto,
+        overlayTitle: "Fracta",
+        overlayContent: "Tap to fact-check",
+      );
+
+      await _setBubbleEnabled(true);
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// ─────────────────────────────────────────────
+  /// Hide Floating Bubble
+  /// ─────────────────────────────────────────────
+
   static Future<void> hideBubble() async {
-    await FlutterOverlayWindow.closeOverlay();
-    await _saveBubbleEnabled(false);
+    try {
+      final active = await FlutterOverlayWindow.isActive();
+
+      if (active) {
+        await FlutterOverlayWindow.closeOverlay();
+      }
+
+      await _setBubbleEnabled(false);
+    } catch (_) {}
   }
 
-  static Future<bool> get isBubbleVisible =>
-      FlutterOverlayWindow.isActive();
+  /// ─────────────────────────────────────────────
+  /// Overlay Messaging
+  /// ─────────────────────────────────────────────
 
-  /// Stream of messages from the overlay widget back to the main app.
-  static Stream<dynamic> get overlayMessages =>
-      FlutterOverlayWindow.overlayListener;
+  /// Listen to messages from overlay isolate
+  static Stream<Map<String, dynamic>> get messages =>
+      FlutterOverlayWindow.overlayListener.map((event) {
+        if (event == null) return <String, dynamic>{};
+        return Map<String, dynamic>.from(event);
+      });
 
-  /// Send data to the overlay widget (e.g., verdict result).
-  static Future<void> sendToOverlay(Map<String, dynamic> data) async {
-    await FlutterOverlayWindow.shareData(data);
+  /// Alias for compatibility with HomeScreen
+  static Stream<Map<String, dynamic>> get overlayMessages => messages;
+
+  /// Send message to overlay widget
+  static Future<void> send(Map<String, dynamic> data) async {
+    try {
+      await FlutterOverlayWindow.shareData(data);
+    } catch (_) {}
   }
 
-  static Future<void> _saveBubbleEnabled(bool enabled) async {
-    final prefs = await _getPrefs;
-    await prefs.setBool(_kBubbleEnabledKey, enabled);
+  /// ─────────────────────────────────────────────
+  /// Persistence
+  /// ─────────────────────────────────────────────
+
+  static Future<void> _setBubbleEnabled(bool enabled) async {
+    final prefs = await _prefsInstance;
+    await prefs.setBool(_bubbleEnabledKey, enabled);
   }
 
   static Future<bool> get wasBubbleEnabled async {
-    final prefs = await _getPrefs;
-    return prefs.getBool(_kBubbleEnabledKey) ?? false;
+    final prefs = await _prefsInstance;
+    return prefs.getBool(_bubbleEnabledKey) ?? false;
+  }
+
+  /// Restore bubble automatically on app launch
+  static Future<void> restoreBubbleIfNeeded() async {
+    final enabled = await wasBubbleEnabled;
+
+    if (!enabled) return;
+
+    final active = await FlutterOverlayWindow.isActive();
+
+    if (!active) {
+      await showBubble();
+    }
   }
 }

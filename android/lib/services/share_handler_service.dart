@@ -1,123 +1,183 @@
 // ========== FILE: lib/services/share_handler_service.dart ==========
 //
-// Handles incoming shares from other apps (WhatsApp, Chrome, Twitter etc.)
-// When user taps "Share → Fracta" in any app, this service receives the
-// text/URL and immediately dispatches it for verification.
+// Handles incoming shares from external apps (WhatsApp, Chrome, Twitter etc).
+// When user taps "Share → Fracta", this service receives the content and
+// dispatches it to the Fracta background verification pipeline.
 //
 
 import 'dart:async';
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+
 import 'background_service.dart';
 
 class ShareHandlerService {
-  StreamSubscription? _intentSub;
-  StreamSubscription? _mediaIntentSub;
+  StreamSubscription<List<SharedMediaFile>>? _shareStreamSub;
+  final Set<String> _processed = {};
 
-  // Point 18: Deduplication set to prevent double processing of sharing events
-  final Set<String> _processedContent = {};
-
-  /// Must be called from a StatefulWidget that lives for the app lifetime
-  /// (e.g., the root widget after login). Pass a callback to handle
-  /// the received content in the UI.
+  /// Initialize share listener.
+  /// Should be called once (e.g., in root widget after login).
   void initialize({
     required void Function(String text, String sourceApp) onTextReceived,
     required void Function(String url, String sourceApp) onUrlReceived,
   }) {
-    // ── While app is already open ──────────────────────────────────
-    _intentSub = ReceiveSharingIntent.instance
-        .getMediaStream()
-        .listen((List<SharedMediaFile> files) {
-      for (final file in files) {
-        // Point 8: Distinguish between shared text and shared file paths
-        if (file.type != SharedMediaType.text && file.type != SharedMediaType.url) {
-          debugPrint('Ignoring non-text share: ${file.path}');
-          continue;
-        }
-        
-        final content = file.path; 
-        if (content.isEmpty || _processedContent.contains(content)) continue;
-        
-        _processedContent.add(content);
-        _scheduleCleanup(content);
-
-        if (_looksLikeUrl(content)) {
-          onUrlReceived(content, _guessSourceApp(content));
-          FractaBackgroundService.sendUrlForVerification(content);
-        } else {
-          onTextReceived(content, _guessSourceApp(content));
-          FractaBackgroundService.sendTextForVerification(content);
-        }
-      }
-    });
-
-    // ── App was launched/resumed via share intent ──────────────────
-    ReceiveSharingIntent.instance
-        .getInitialMedia()
-        .then((List<SharedMediaFile> files) {
-      if (files.isEmpty) return;
-      
-      for (final file in files) {
-        // Point 11: Ignore non-text/url media (images/video share handled elsewhere)
-        if (file.type != SharedMediaType.text && file.type != SharedMediaType.url) {
-          debugPrint('Ignoring non-text initial share: ${file.path}');
-          continue;
-        }
-        
-        final content = file.path;
-        if (content.isEmpty || _processedContent.contains(content)) continue;
-
-        _processedContent.add(content);
-        _scheduleCleanup(content);
-
-        if (_looksLikeUrl(content)) {
-          onUrlReceived(content, _guessSourceApp(content));
-          FractaBackgroundService.sendUrlForVerification(content);
-        } else {
-          onTextReceived(content, _guessSourceApp(content));
-          FractaBackgroundService.sendTextForVerification(content);
-        }
-      }
-      ReceiveSharingIntent.instance.reset();
-    });
+    _listenWhileAppRunning(onTextReceived, onUrlReceived);
+    _handleInitialShare(onTextReceived, onUrlReceived);
   }
 
+  /// Dispose listeners
   void dispose() {
-    _intentSub?.cancel();
-    _mediaIntentSub?.cancel();
+    _shareStreamSub?.cancel();
   }
 
-  bool _looksLikeUrl(String s) {
-    final trimmed = s.trim().toLowerCase();
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return true;
-    
-    // Stricter regex for URL-like patterns without protocol
-    // Avoids matching local file paths like file.txt or config.json
+  /// ─────────────────────────────────────────────
+  /// Handle shares while app is open
+  /// ─────────────────────────────────────────────
+
+  void _listenWhileAppRunning(
+    void Function(String text, String sourceApp) onTextReceived,
+    void Function(String url, String sourceApp) onUrlReceived,
+  ) {
+    _shareStreamSub =
+        ReceiveSharingIntent.instance.getMediaStream().listen((files) {
+      for (final file in files) {
+        _handleIncomingShare(
+          file,
+          onTextReceived,
+          onUrlReceived,
+        );
+      }
+    }, onError: (err) {
+      debugPrint("Share stream error: $err");
+    });
+  }
+
+  /// ─────────────────────────────────────────────
+  /// Handle share when app was opened via share
+  /// ─────────────────────────────────────────────
+
+  void _handleInitialShare(
+    void Function(String text, String sourceApp) onTextReceived,
+    void Function(String url, String sourceApp) onUrlReceived,
+  ) async {
+    try {
+      final files = await ReceiveSharingIntent.instance.getInitialMedia();
+
+      if (files.isEmpty) return;
+
+      for (final file in files) {
+        _handleIncomingShare(
+          file,
+          onTextReceived,
+          onUrlReceived,
+        );
+      }
+
+      ReceiveSharingIntent.instance.reset();
+    } catch (e) {
+      debugPrint("Initial share handling failed: $e");
+    }
+  }
+
+  /// ─────────────────────────────────────────────
+  /// Process incoming share
+  /// ─────────────────────────────────────────────
+
+  void _handleIncomingShare(
+    SharedMediaFile file,
+    void Function(String text, String sourceApp) onTextReceived,
+    void Function(String url, String sourceApp) onUrlReceived,
+  ) {
+    if (file.type != SharedMediaType.text && file.type != SharedMediaType.url) {
+      debugPrint("Ignoring non-text share: ${file.path}");
+      return;
+    }
+
+    final content = file.path.trim();
+
+    if (content.isEmpty) return;
+
+    if (_processed.contains(content)) return;
+
+    _processed.add(content);
+    _scheduleCleanup(content);
+
+    final source = _guessSourceApp(content);
+
+    if (_looksLikeUrl(content)) {
+      onUrlReceived(content, source);
+      FractaBackgroundService.sendUrlForVerification(content);
+    } else {
+      onTextReceived(content, source);
+      FractaBackgroundService.sendTextForVerification(content);
+    }
+  }
+
+  /// ─────────────────────────────────────────────
+  /// URL Detection
+  /// ─────────────────────────────────────────────
+
+  bool _looksLikeUrl(String input) {
+    final s = input.trim().toLowerCase();
+
+    if (s.startsWith("http://") || s.startsWith("https://")) {
+      return true;
+    }
+
     final urlRegex = RegExp(
       r'^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:\/.*)?$',
       caseSensitive: false,
     );
-    
-    // Blacklist common file extensions that aren't TLDs in this context
-    final fileExtensions = ['.m4a', '.wav', '.jpg', '.png', '.json', '.txt', '.mp4'];
-    if (fileExtensions.any((ext) => trimmed.endsWith(ext))) return false;
 
-    return urlRegex.hasMatch(trimmed);
+    final blacklist = [
+      ".m4a",
+      ".wav",
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".mp4",
+      ".json",
+      ".txt"
+    ];
+
+    for (final ext in blacklist) {
+      if (s.endsWith(ext)) return false;
+    }
+
+    return urlRegex.hasMatch(s);
   }
+
+  /// ─────────────────────────────────────────────
+  /// Source App Guessing
+  /// ─────────────────────────────────────────────
 
   String _guessSourceApp(String content) {
-    // Heuristics based on content patterns
-    if (content.contains('twitter.com') || content.contains('t.co')) return 'twitter';
-    if (content.contains('facebook.com') || content.contains('fb.me')) return 'facebook';
-    if (content.contains('instagram.com')) return 'instagram';
-    if (content.contains('youtube.com') || content.contains('youtu.be')) return 'youtube';
-    if (content.contains('whatsapp')) return 'whatsapp';
-    // WhatsApp forwards often have "Forwarded as received" or are plain text
-    return 'unknown';
+    final c = content.toLowerCase();
+
+    if (c.contains("twitter.com") || c.contains("t.co")) return "twitter";
+
+    if (c.contains("facebook.com") || c.contains("fb.me")) return "facebook";
+
+    if (c.contains("instagram.com")) return "instagram";
+
+    if (c.contains("youtube.com") || c.contains("youtu.be")) return "youtube";
+
+    if (c.contains("whatsapp")) return "whatsapp";
+
+    if (c.contains("reddit.com")) return "reddit";
+
+    if (c.contains("telegram.me") || c.contains("t.me")) return "telegram";
+
+    return "unknown";
   }
 
+  /// ─────────────────────────────────────────────
+  /// Deduplication Cleanup
+  /// ─────────────────────────────────────────────
+
   void _scheduleCleanup(String content) {
-    // Clear from deduplication set after 5 seconds
-    Timer(const Duration(seconds: 5), () => _processedContent.remove(content));
+    Timer(const Duration(seconds: 5), () {
+      _processed.remove(content);
+    });
   }
 }

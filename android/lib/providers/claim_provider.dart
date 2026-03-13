@@ -8,23 +8,35 @@ import '../services/api_service.dart';
 class ClaimProvider extends ChangeNotifier {
   final ApiService _apiService;
 
-  ClaimModel? _currentClaim;
-  List<ClaimModel> _history = [];
-  bool _isLoading = false;
-  bool _isLoadingHistory = false;
-  String? _error;
-  int _historyOffset = 0;
-  bool _hasMoreHistory = true;
-
   ClaimProvider({ApiService? apiService})
       : _apiService = apiService ?? ApiService();
 
+  ClaimModel? _currentClaim;
+  final List<ClaimModel> _history = [];
+
+  bool _isLoading = false;
+  bool _isLoadingHistory = false;
+
+  String? _error;
+
+  int _historyOffset = 0;
+  bool _hasMoreHistory = true;
+
   ClaimModel? get currentClaim => _currentClaim;
-  List<ClaimModel> get history => _history;
+
+  List<ClaimModel> get history => List.unmodifiable(_history);
+
   bool get isLoading => _isLoading;
+
   bool get isLoadingHistory => _isLoadingHistory;
+
   String? get error => _error;
+
   bool get hasMoreHistory => _hasMoreHistory;
+
+  // ===============================
+  // Verify Claim
+  // ===============================
 
   Future<ClaimModel?> verifyClaim({
     required InputType type,
@@ -38,59 +50,87 @@ class ClaimProvider extends ChangeNotifier {
     int shares = 0,
     String? accessToken,
   }) async {
+    if (_isLoading) return null;
+
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      Map<String, dynamic> json;
+      late Map<String, dynamic> json;
+
       switch (type) {
         case InputType.text:
+          if (text == null || text.trim().isEmpty) {
+            throw Exception("Text cannot be empty");
+          }
+
           json = await _apiService.verifyText(
-            text: text ?? '',
+            text: text.trim(),
             platform: platform,
             shares: shares,
-            accessToken: accessToken,
+            token: accessToken,
           );
+
           break;
+
         case InputType.image:
+          if (imageBytes == null || imageBytes.isEmpty) {
+            throw Exception("Image bytes missing");
+          }
+
           json = await _apiService.verifyImage(
-            imageBytes: imageBytes ?? [],
-            filename: imageFilename ?? 'image.jpg',
+            imageBytes: imageBytes,
+            filename: imageFilename ?? "image.jpg",
             platform: platform,
             shares: shares,
-            accessToken: accessToken,
+            token: accessToken,
           );
+
           break;
+
         case InputType.url:
+          if (url == null || url.trim().isEmpty) {
+            throw Exception("URL cannot be empty");
+          }
+
           json = await _apiService.verifyUrl(
-            url: url ?? '',
+            url: url.trim(),
             platform: platform,
             shares: shares,
-            accessToken: accessToken,
+            token: accessToken,
           );
+
           break;
+
         case InputType.voice:
+          if (audioBytes == null || audioBytes.isEmpty) {
+            throw Exception("Audio bytes missing");
+          }
+
           json = await _apiService.verifyVoice(
-            audioBytes: audioBytes ?? [],
-            filename: audioFilename ?? 'recording.wav',
+            audioBytes: audioBytes,
+            filename: audioFilename ?? "recording.wav",
             platform: platform,
             shares: shares,
             accessToken: accessToken,
           );
+
           break;
       }
 
-      _currentClaim = ClaimModel.fromJson(json);
-      notifyListeners();
-      return _currentClaim;
+      final claim = ClaimModel.fromJson(json);
+
+      _currentClaim = claim;
+
+      return claim;
     } on ApiException catch (e) {
       _error = e.message;
-      notifyListeners();
+
       return null;
-    } catch (e) {
-      _error = 'An unexpected error occurred. Please try again.';
-      notifyListeners();
+    } catch (_) {
+      _error = "An unexpected error occurred. Please try again.";
+
       return null;
     } finally {
       _isLoading = false;
@@ -98,12 +138,23 @@ class ClaimProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> loadHistory(String accessToken, {bool refresh = false}) async {
+  // ===============================
+  // History
+  // ===============================
+
+  Future<void> loadHistory(
+    String accessToken, {
+    bool refresh = false,
+  }) async {
+    if (_isLoadingHistory) return;
+
     if (refresh) {
-      _history = [];
+      _history.clear();
       _historyOffset = 0;
       _hasMoreHistory = true;
+      _error = null;
     }
+
     if (!_hasMoreHistory) return;
 
     _isLoadingHistory = true;
@@ -115,18 +166,29 @@ class ClaimProvider extends ChangeNotifier {
         limit: 20,
         offset: _historyOffset,
       );
-      _history.addAll(items.map(ClaimModel.fromJson));
-      _historyOffset += items.length;
-      _hasMoreHistory = items.isNotEmpty && items.length >= 20;
+
+      final claims = items.map(ClaimModel.fromJson).toList();
+
+      _history.addAll(claims);
+
+      _historyOffset += claims.length;
+
+      if (claims.length < 20) {
+        _hasMoreHistory = false;
+      }
     } on ApiException catch (e) {
       _error = e.message;
-    } catch (e) {
-      _error = 'Failed to load history.';
+    } catch (_) {
+      _error = "Failed to load history.";
     } finally {
       _isLoadingHistory = false;
       notifyListeners();
     }
   }
+
+  // ===============================
+  // Report Claim
+  // ===============================
 
   Future<void> reportClaim({
     required String claimId,
@@ -134,21 +196,42 @@ class ClaimProvider extends ChangeNotifier {
     String? note,
     String? accessToken,
   }) async {
-    await _apiService.reportClaim(
-      claimId: claimId,
-      reportType: reportType,
-      note: note,
-      accessToken: accessToken,
-    );
+    try {
+      await _apiService.reportClaim(
+        claimId: claimId,
+        reportType: reportType,
+        note: note,
+        accessToken: accessToken,
+      );
+    } catch (e) {
+      _error = "Failed to report claim.";
+      notifyListeners();
+    }
   }
 
+  // ===============================
+  // Utility
+  // ===============================
+
   void clearCurrentClaim() {
+    if (_currentClaim == null) return;
+
     _currentClaim = null;
     notifyListeners();
   }
 
   void clearError() {
+    if (_error == null) return;
+
     _error = null;
+    notifyListeners();
+  }
+
+  void clearHistory() {
+    _history.clear();
+    _historyOffset = 0;
+    _hasMoreHistory = true;
+
     notifyListeners();
   }
 }

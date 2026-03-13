@@ -1,86 +1,135 @@
 // ========== FILE: lib/services/sarvam_service.dart ==========
+//
+// Handles Sarvam voice features:
+//  • language hint detection
+//  • playing base64 audio responses
+//  • audio lifecycle management
+//
 
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 
 class SarvamService {
-  final AudioPlayer _audioPlayer = AudioPlayer();
+  final AudioPlayer _player = AudioPlayer();
 
-  /// Simple client-side language detection before sending to backend.
+  /// ─────────────────────────────────────────────
+  /// Language Detection (Client-side hint)
+  /// ─────────────────────────────────────────────
+
   String detectLanguageHint(String text) {
-    if (text.isEmpty) return 'en-IN';
+    if (text.trim().isEmpty) return "en-IN";
 
-    // Count Devanagari characters (U+0900–U+097F)
+    final normalized = text.trim().toLowerCase();
+
     int devanagariCount = 0;
     int totalChars = 0;
-    for (final rune in text.runes) {
+
+    for (final rune in normalized.runes) {
       if (rune >= 0x0900 && rune <= 0x097F) {
         devanagariCount++;
       }
-      if (rune > 32) totalChars++; // non-whitespace
+      if (rune > 32) totalChars++;
     }
 
     if (totalChars > 0 && devanagariCount / totalChars > 0.2) {
-      return 'hi-IN';
+      return "hi-IN";
     }
 
-    // Check for common Romanized Hindi patterns
-    final lowerText = text.toLowerCase();
-    
-    // Pattern 1: Common Romanized Hindi words
     final romanizedHindiRegex = RegExp(
-      r'\b(hai|kya|nahi|ye|vo|aur|main|hum|tum|aap|iska|uska|kar|raha|tho|kyun|kab|kaise)\b',
+      r'\b(hai|kya|nahi|kyun|kab|kaise|ye|vo|aur|main|hum|tum|aap|iska|uska|raha|rahi|kar)\b',
       caseSensitive: false,
     );
-    
-    if (romanizedHindiRegex.hasMatch(lowerText)) {
-      return 'hi-IN';
+
+    if (romanizedHindiRegex.hasMatch(normalized)) {
+      return "hi-IN";
     }
 
-    // Pattern 2: ROMANIZED HINDI heuristic (Check for missing common English patterns)
-    // If it has "hai" or "kya" at the end, it's very likely Hindi
-    if (lowerText.endsWith(' hai') || lowerText.endsWith(' kya') || lowerText.endsWith(' na')) {
-      return 'hi-IN';
+    if (normalized.endsWith(" hai") ||
+        normalized.endsWith(" kya") ||
+        normalized.endsWith(" na")) {
+      return "hi-IN";
     }
 
-    return 'en-IN';
+    return "en-IN";
   }
 
-  /// Plays audio from a base64-encoded WAV string.
+  /// ─────────────────────────────────────────────
+  /// Audio Playback
+  /// ─────────────────────────────────────────────
+
   Future<void> playAudioFromBase64(String base64Audio) async {
     try {
+      if (base64Audio.isEmpty) return;
+
       final bytes = base64Decode(base64Audio);
+
       final tempDir = await getTemporaryDirectory();
-      // Point 9: Use unique filename to prevent collision
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final file = File('${tempDir.path}/sarvam_response_$timestamp.wav');
+
+      final filename =
+          "sarvam_audio_${DateTime.now().millisecondsSinceEpoch}.wav";
+
+      final file = File("${tempDir.path}/$filename");
+
       await file.writeAsBytes(bytes);
-      await _audioPlayer.setVolume(1.0); // Point 19: Set default volume
-      await _audioPlayer.play(DeviceFileSource(file.path));
-      
-      // Cleanup after play (optional but good for long-term storage)
-      _audioPlayer.onPlayerComplete.first.then((_) {
-        if (file.existsSync()) file.deleteSync();
+
+      await _player.setVolume(1.0);
+
+      await _player.play(DeviceFileSource(file.path));
+
+      _player.onPlayerComplete.first.then((_) {
+        try {
+          if (file.existsSync()) {
+            file.deleteSync();
+          }
+        } catch (_) {}
       });
     } catch (e) {
-      throw Exception('Failed to play audio: $e');
+      throw Exception("Sarvam audio playback failed: $e");
     }
   }
 
-  /// Stops any currently playing audio.
+  /// ─────────────────────────────────────────────
+  /// Audio Control
+  /// ─────────────────────────────────────────────
+
   Future<void> stopAudio() async {
-    await _audioPlayer.stop();
+    try {
+      await _player.stop();
+    } catch (_) {}
   }
 
-  /// Returns the current audio player state stream.
-  Stream<PlayerState> get playerStateStream => _audioPlayer.onPlayerStateChanged;
+  Future<void> pauseAudio() async {
+    try {
+      await _player.pause();
+    } catch (_) {}
+  }
 
-  /// Returns current player state.
-  PlayerState get playerState => _audioPlayer.state;
+  Future<void> resumeAudio() async {
+    try {
+      await _player.resume();
+    } catch (_) {}
+  }
+
+  /// ─────────────────────────────────────────────
+  /// Player State
+  /// ─────────────────────────────────────────────
+
+  Stream<PlayerState> get playerStateStream => _player.onPlayerStateChanged;
+
+  PlayerState get playerState => _player.state;
+
+  bool get isPlaying => _player.state == PlayerState.playing;
+
+  /// ─────────────────────────────────────────────
+  /// Cleanup
+  /// ─────────────────────────────────────────────
 
   void dispose() {
-    _audioPlayer.dispose();
+    try {
+      _player.dispose();
+    } catch (_) {}
   }
 }

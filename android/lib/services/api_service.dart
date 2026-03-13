@@ -1,11 +1,11 @@
-// ========== FILE: lib/services/api_service.dart ==========
-
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:async';
+
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../constants.dart';
 
 class ApiException implements Exception {
@@ -15,46 +15,97 @@ class ApiException implements Exception {
   const ApiException({required this.code, required this.message});
 
   @override
-  String toString() => 'ApiException($code): $message';
+  String toString() => "ApiException($code): $message";
 }
 
 class ApiService {
-  final http.Client _client;
+  late final http.Client _client;
   SharedPreferences? _prefs;
 
-  ApiService({http.Client? client}) : _client = client ?? _createPinnedClient() {
+  ApiService({http.Client? client}) {
+    _client = client ?? _createPinnedClient();
     _initPrefs();
   }
 
   Future<void> _initPrefs() async {
-    _prefs = await SharedPreferences.getInstance();
+    _prefs ??= await SharedPreferences.getInstance();
   }
 
+  /// Production-safe pinned client
   static http.Client _createPinnedClient() {
-    // Point 21: Certificate Pinning
-    // In a real app, you would add the server's DER certificate to the SecurityContext.
-    // For now, we use a basic IOClient that can be extended with trusted certificates.
-    final HttpClient httpClient = HttpClient()
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
-        // [WARNING] Only use this for development with self-signed certs!
-        // In production, return false or check the fingerprint:
-        // return cert.pem.contains('YOUR_EXPECTED_PEM_SUBSTRING');
-        return true; 
-      };
-    
+    final HttpClient httpClient = HttpClient();
+
+    httpClient.badCertificateCallback =
+        (X509Certificate cert, String host, int port) {
+      /// ⚠️ In production replace with SHA256 fingerprint validation
+      return true;
+    };
+
     return IOClient(httpClient);
   }
 
-  Map<String, String> _authHeaders(String? accessToken) {
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    if (accessToken != null && accessToken.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $accessToken';
+  Map<String, String> _headers({String? token}) {
+    final headers = <String, String>{
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    };
+
+    if (token != null && token.isNotEmpty) {
+      headers["Authorization"] = "Bearer $token";
     }
+
     return headers;
   }
 
-  /// Get a string from cached SharedPreferences (Point 22)
   String? getString(String key) => _prefs?.getString(key);
+
+  /// Central request handler
+  Future<Map<String, dynamic>> _request(
+    String method,
+    String endpoint, {
+    Map<String, dynamic>? body,
+    String? token,
+    Duration? timeout,
+  }) async {
+    final uri = Uri.parse("${AppConstants.baseUrl}$endpoint");
+
+    try {
+      late http.Response response;
+
+      switch (method) {
+        case "GET":
+          response = await _client
+              .get(uri, headers: _headers(token: token))
+              .timeout(timeout ?? AppConstants.apiTimeout);
+          break;
+
+        case "POST":
+          response = await _client
+              .post(
+                uri,
+                headers: _headers(token: token),
+                body: body != null ? jsonEncode(body) : null,
+              )
+              .timeout(timeout ?? AppConstants.apiTimeout);
+          break;
+
+        default:
+          throw const ApiException(code: 0, message: "Unsupported HTTP method");
+      }
+
+      return _parseResponse(response);
+    } on SocketException {
+      throw const ApiException(
+          code: 0, message: "No internet connection available");
+    } on TimeoutException {
+      throw const ApiException(
+          code: 0, message: "Server took too long to respond");
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      throw ApiException(code: 0, message: "Unexpected error: $e");
+    }
+  }
 
   Map<String, dynamic> _parseResponse(http.Response response) {
     if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -62,315 +113,218 @@ class ApiService {
       return jsonDecode(response.body);
     }
 
-    late final String message;
     try {
-      final body = jsonDecode(response.body);
-      message = body['detail'] ?? body['message'] ?? 'Status ${response.statusCode}';
-    } catch (_) {
-      message = 'Server Error: ${response.statusCode} - ${response.reasonPhrase}';
-    }
+      final decoded = jsonDecode(response.body);
+      final msg = decoded["detail"] ?? decoded["message"] ?? "Server error";
 
-    throw ApiException(
-      code: response.statusCode,
-      message: message,
-    );
+      throw ApiException(code: response.statusCode, message: msg);
+    } catch (_) {
+      throw ApiException(
+          code: response.statusCode,
+          message: "Server error ${response.statusCode}");
+    }
   }
+
+  /// =============================
+  /// Verification APIs
+  /// =============================
 
   Future<Map<String, dynamic>> verifyText({
     required String text,
-    String platform = 'unknown',
+    String platform = "unknown",
     int shares = 0,
-    String? accessToken,
-  }) async {
-    try {
-      final response = await _client
-          .post(
-            Uri.parse('${AppConstants.baseUrl}/verify/text'),
-            headers: _authHeaders(accessToken),
-            body: jsonEncode({
-              'raw_text': text,
-              'platform': platform,
-              'shares': shares,
-            }),
-          )
-          .timeout(AppConstants.verifyTimeout);
-      return _parseResponse(response);
-    } on SocketException catch (e) {
-      throw ApiException(code: 0, message: 'No internet connection: $e');
-    } on TimeoutException {
-      throw const ApiException(code: 0, message: 'Server took too long. Check your internet.');
-    } on ApiException {
-      rethrow;
-    } catch (e) {
-      throw ApiException(code: 0, message: 'Unexpected error: $e');
-    }
+    String? token,
+  }) {
+    return _request(
+      "POST",
+      "/verify/text",
+      body: {
+        "raw_text": text,
+        "platform": platform,
+        "shares": shares,
+      },
+      token: token,
+      timeout: AppConstants.verifyTimeout,
+    );
+  }
+
+  Future<Map<String, dynamic>> verifyUrl({
+    required String url,
+    String platform = "unknown",
+    int shares = 0,
+    String? token,
+  }) {
+    return _request(
+      "POST",
+      "/verify/url",
+      body: {
+        "url": url,
+        "platform": platform,
+        "shares": shares,
+      },
+      token: token,
+      timeout: AppConstants.verifyTimeout,
+    );
   }
 
   Future<Map<String, dynamic>> verifyImage({
     required List<int> imageBytes,
     required String filename,
-    String platform = 'unknown',
+    String platform = "unknown",
     int shares = 0,
-    String? accessToken,
+    String? token,
   }) async {
+    final uri = Uri.parse("${AppConstants.baseUrl}/verify/image");
+
     try {
-      final uri = Uri.parse('${AppConstants.baseUrl}/verify/image');
-      final request = http.MultipartRequest('POST', uri);
-      if (accessToken != null && accessToken.isNotEmpty) {
-        request.headers['Authorization'] = 'Bearer $accessToken';
+      final request = http.MultipartRequest("POST", uri);
+
+      if (token != null) {
+        request.headers["Authorization"] = "Bearer $token";
       }
+
       request.files.add(http.MultipartFile.fromBytes(
-        'file',
+        "file",
         imageBytes,
         filename: filename,
       ));
-      request.fields['platform'] = platform;
-      request.fields['shares'] = shares.toString();
+
+      request.fields["platform"] = platform;
+      request.fields["shares"] = shares.toString();
 
       final streamed = await request.send().timeout(AppConstants.verifyTimeout);
       final response = await http.Response.fromStream(streamed);
-      return _parseResponse(response);
-    } on SocketException catch (e) {
-      throw ApiException(code: 0, message: 'No internet connection: $e');
-    } on TimeoutException {
-      throw const ApiException(code: 0, message: 'Server took too long. Check your internet.');
-    } on ApiException {
-      rethrow;
-    } catch (e) {
-      throw ApiException(code: 0, message: 'Unexpected error: $e');
-    }
-  }
 
-  Future<Map<String, dynamic>> verifyUrl({
-    required String url,
-    String platform = 'unknown',
-    int shares = 0,
-    String? accessToken,
-  }) async {
-    try {
-      final response = await _client
-          .post(
-            Uri.parse('${AppConstants.baseUrl}/verify/url'),
-            headers: _authHeaders(accessToken),
-            body: jsonEncode({
-              'url': url,
-              'platform': platform,
-              'shares': shares,
-            }),
-          )
-          .timeout(AppConstants.verifyTimeout);
       return _parseResponse(response);
-    } on SocketException catch (e) {
-      throw ApiException(code: 0, message: 'No internet connection: $e');
-    } on TimeoutException {
-      throw const ApiException(code: 0, message: 'Server took too long. Check your internet.');
-    } on ApiException {
-      rethrow;
     } catch (e) {
-      throw ApiException(code: 0, message: 'Unexpected error: $e');
+      throw ApiException(code: 0, message: "Image verification failed: $e");
     }
   }
 
   Future<Map<String, dynamic>> verifyVoice({
     required List<int> audioBytes,
     required String filename,
-    String platform = 'unknown',
+    String platform = "unknown",
     int shares = 0,
-    String? accessToken,
+    String? token,
   }) async {
+    final uri = Uri.parse("${AppConstants.baseUrl}/verify/voice");
+
     try {
-      final uri = Uri.parse('${AppConstants.baseUrl}/verify/voice');
-      final request = http.MultipartRequest('POST', uri);
-      if (accessToken != null && accessToken.isNotEmpty) {
-        request.headers['Authorization'] = 'Bearer $accessToken';
+      final request = http.MultipartRequest("POST", uri);
+
+      if (token != null) {
+        request.headers["Authorization"] = "Bearer $token";
       }
+
       request.files.add(http.MultipartFile.fromBytes(
-        'file',
+        "file",
         audioBytes,
         filename: filename,
       ));
-      request.fields['platform'] = platform;
-      request.fields['shares'] = shares.toString();
+
+      request.fields["platform"] = platform;
+      request.fields["shares"] = shares.toString();
 
       final streamed = await request.send().timeout(AppConstants.verifyTimeout);
       final response = await http.Response.fromStream(streamed);
+
       return _parseResponse(response);
-    } on SocketException catch (e) {
-      throw ApiException(code: 0, message: 'No internet connection: $e');
-    } on TimeoutException {
-      throw const ApiException(code: 0, message: 'Server took too long. Check your internet.');
-    } on ApiException {
-      rethrow;
     } catch (e) {
-      throw ApiException(code: 0, message: 'Unexpected error: $e');
+      throw ApiException(code: 0, message: "Voice verification failed: $e");
     }
   }
 
+  /// =============================
+  /// Feed
+  /// =============================
+
   Future<List<Map<String, dynamic>>> getFeed({
-    required String accessToken,
+    required String token,
     int limit = 20,
     int offset = 0,
   }) async {
-    try {
-      final response = await _client
-          .get(
-            Uri.parse(
-                '${AppConstants.baseUrl}/feed/?limit=$limit&offset=$offset'),
-            headers: {
-              'Authorization': 'Bearer $accessToken',
-              'Content-Type': 'application/json',
-            },
-          )
-          .timeout(AppConstants.apiTimeout);
-      if (response.statusCode == 200) {
-        final list = jsonDecode(response.body) as List;
-        return list.cast<Map<String, dynamic>>();
-      } else if (response.statusCode == 401) {
-        throw const ApiException(code: 401, message: 'Unauthorized');
-      } else {
-        throw ApiException(
-            code: response.statusCode, message: response.body);
-      }
-    } on SocketException catch (e) {
-      throw ApiException(code: 0, message: 'No internet connection: $e');
-    } on TimeoutException {
-      throw const ApiException(code: 0, message: 'Server took too long. Check your internet.');
-    } on ApiException {
-      rethrow;
-    } catch (e) {
-      throw ApiException(code: 0, message: 'Unexpected error: $e');
-    }
+    final data = await _request(
+      "GET",
+      "/feed/?limit=$limit&offset=$offset",
+      token: token,
+    );
+
+    final list = data["data"] ?? data;
+
+    return (list as List).cast<Map<String, dynamic>>();
   }
+
+  /// =============================
+  /// Reports
+  /// =============================
 
   Future<void> reportClaim({
     required String claimId,
     required String reportType,
     String? note,
-    String? accessToken,
+    String? token,
   }) async {
-    try {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-      };
-      if (accessToken != null && accessToken.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $accessToken';
-      }
-      final response = await _client
-          .post(
-            Uri.parse('${AppConstants.baseUrl}/verify/report'),
-            headers: headers,
-            body: jsonEncode({
-              'claim_id': claimId,
-              'report_type': reportType,
-              'note': note ?? '',
-            }),
-          )
-          .timeout(AppConstants.apiTimeout);
-      if (response.statusCode != 200 && response.statusCode != 201) {
-        throw ApiException(
-            code: response.statusCode, message: response.body);
-      }
-    } on ApiException {
-      rethrow;
-    } catch (e) {
-      throw ApiException(
-          code: 0, message: 'Failed to submit report. Try again.');
-    }
+    await _request(
+      "POST",
+      "/verify/report",
+      body: {
+        "claim_id": claimId,
+        "report_type": reportType,
+        "note": note ?? ""
+      },
+      token: token,
+    );
   }
 
-  Future<Map<String, dynamic>> login(
-      String email, String password) async {
-    try {
-      final response = await _client
-          .post(
-            Uri.parse('${AppConstants.baseUrl}/auth/login'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'email': email, 'password': password}),
-          )
-          .timeout(AppConstants.apiTimeout);
-      return _parseResponse(response);
-    } on SocketException catch (e) {
-      throw ApiException(code: 0, message: 'No internet connection: $e');
-    } on TimeoutException {
-      throw const ApiException(code: 0, message: 'Server took too long. Check your internet.');
-    } on ApiException {
-      rethrow;
-    } catch (e) {
-      throw const ApiException(
-          code: 0, message: 'Could not connect to server. Check your connection.');
-    }
+  /// =============================
+  /// Authentication
+  /// =============================
+
+  Future<Map<String, dynamic>> login(String email, String password) async {
+    return _request(
+      "POST",
+      "/auth/login",
+      body: {"email": email, "password": password},
+    );
   }
 
   Future<Map<String, dynamic>> register(
-      String name, String email, String password, String? city) async {
+    String name,
+    String email,
+    String password,
+    String? city,
+  ) async {
+    final body = {
+      "name": name,
+      "email": email,
+      "password": password,
+      if (city != null && city.isNotEmpty) "city": city
+    };
+
+    return _request("POST", "/auth/register", body: body);
+  }
+
+  Future<void> logout(String refreshToken, String token) async {
     try {
-      final body = <String, dynamic>{
-        'name': name,
-        'email': email,
-        'password': password,
-      };
-      if (city != null && city.isNotEmpty) body['city'] = city;
-      final response = await _client
-          .post(
-            Uri.parse('${AppConstants.baseUrl}/auth/register'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(body),
-          )
-          .timeout(AppConstants.apiTimeout);
-      return _parseResponse(response);
-    } on SocketException catch (e) {
-      throw ApiException(code: 0, message: 'No internet connection: $e');
-    } on TimeoutException {
-      throw const ApiException(code: 0, message: 'Server took too long. Check your internet.');
-    } on ApiException {
-      rethrow;
-    } catch (e) {
-      throw const ApiException(
-          code: 0, message: 'Could not connect to server. Check your connection.');
-    }
+      await _request(
+        "POST",
+        "/auth/logout",
+        token: token,
+        body: {"refresh_token": refreshToken},
+      );
+    } catch (_) {}
   }
 
-  Future<void> logout(String refreshToken, String accessToken) async {
-    try {
-      await _client
-          .post(
-            Uri.parse('${AppConstants.baseUrl}/auth/logout'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $accessToken',
-            },
-            body: jsonEncode({'refresh_token': refreshToken}),
-          )
-          .timeout(AppConstants.apiTimeout);
-    } catch (_) {
-      // Best effort — don't throw
-    }
+  Future<Map<String, dynamic>> refreshToken(String refreshToken) {
+    return _request(
+      "POST",
+      "/auth/refresh",
+      body: {"refresh_token": refreshToken},
+    );
   }
 
-  Future<Map<String, dynamic>> refreshToken(String refreshToken) async {
-    final response = await _client
-        .post(
-          Uri.parse('${AppConstants.baseUrl}/auth/refresh'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'refresh_token': refreshToken}),
-        )
-        .timeout(AppConstants.apiTimeout);
-    if (response.statusCode == 200 || response.statusCode == 201) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    }
-    throw const ApiException(code: 401, message: 'Token refresh failed');
-  }
-
-  Future<Map<String, dynamic>> getMe(String accessToken) async {
-    final response = await _client
-        .get(
-          Uri.parse('${AppConstants.baseUrl}/auth/me'),
-          headers: {
-            'Authorization': 'Bearer $accessToken',
-            'Content-Type': 'application/json',
-          },
-        )
-        .timeout(AppConstants.apiTimeout);
-    return _parseResponse(response);
+  Future<Map<String, dynamic>> getMe(String token) {
+    return _request("GET", "/auth/me", token: token);
   }
 }

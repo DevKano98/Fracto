@@ -145,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Wire overlay bubble tap → open quick-capture ───────────────────
   void _wireOverlayMessages() {
     _overlaySub = OverlayService.overlayMessages.listen((data) {
-      if (data is Map && data['action'] == 'open_capture') {
+      if (data['action'] == 'open_capture') {
         if (mounted) QuickCaptureScreen.show(context);
       }
     });

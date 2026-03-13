@@ -112,7 +112,7 @@ class AuthProvider extends ChangeNotifier {
 
       final token = await _authService.getRefreshToken();
       if (token != null) {
-        await _authService.logout(token);
+        await _authService.logout();
       } else {
         await _authService.clearAll();
       }

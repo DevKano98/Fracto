@@ -3,12 +3,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shimmer/shimmer.dart';
+
+import '../constants.dart';
 import '../models/claim_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/claim_provider.dart';
 import '../theme.dart';
 import '../widgets/verdict_badge.dart';
-import '../constants.dart';
 import 'login_screen.dart';
 import 'result_screen.dart';
 
@@ -21,54 +22,73 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final ScrollController _scrollController = ScrollController();
-  bool _isFetching = false;
+
+  bool _fetching = false;
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _loadHistory(refresh: true));
+
+    _scrollController.addListener(_handleScroll);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadHistory(refresh: true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_handleScroll)
+      ..dispose();
+    super.dispose();
   }
 
   Future<void> _loadHistory({bool refresh = false}) async {
-    final authProvider = context.read<AuthProvider>();
-    if (!authProvider.isLoggedIn) return;
-    final token = await authProvider.getAccessToken();
+    final auth = context.read<AuthProvider>();
+
+    if (!auth.isLoggedIn) return;
+
+    final token = await auth.getAccessToken();
+
     if (token == null || token.isEmpty) return;
-    
-    if (_isFetching) return;
-    setState(() => _isFetching = true);
-    
+
+    if (_fetching) return;
+
+    _fetching = true;
+
     try {
-      await context
-          .read<ClaimProvider>()
-          .loadHistory(token, refresh: refresh);
+      await context.read<ClaimProvider>().loadHistory(
+            token,
+            refresh: refresh,
+          );
     } finally {
-      if (mounted) setState(() => _isFetching = false);
+      if (mounted) {
+        setState(() => _fetching = false);
+      } else {
+        _fetching = false;
+      }
     }
   }
 
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 150) {
-      final claimProvider = context.read<ClaimProvider>();
+  void _handleScroll() {
+    final claimProvider = context.read<ClaimProvider>();
+
+    if (!_scrollController.hasClients) return;
+
+    final position = _scrollController.position;
+
+    if (position.pixels >= position.maxScrollExtent - 150) {
       if (!claimProvider.isLoadingHistory &&
           claimProvider.hasMoreHistory &&
-          !_isFetching) {
+          !_fetching) {
         _loadHistory();
       }
     }
   }
 
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  IconData _sourceIcon(String? sourceType) {
-    switch (sourceType) {
+  IconData _sourceIcon(String? source) {
+    switch (source) {
       case 'image':
         return Icons.image_outlined;
       case 'url':
@@ -83,69 +103,44 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Future<void> _logout(AuthProvider auth) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (_) => AlertDialog(
         backgroundColor: AppColors.surface,
-        title: const Text('Logout',
-            style: TextStyle(color: AppColors.onBackground)),
-        content: const Text('Are you sure you want to logout?',
-            style: TextStyle(color: AppColors.onSurface)),
+        title: const Text("Logout"),
+        content: const Text("Are you sure you want to logout?"),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppColors.onSurface)),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Logout',
-                style: TextStyle(color: AppColors.verdictFalse)),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Logout"),
           ),
         ],
       ),
     );
-    if (confirmed == true && mounted) {
-      await auth.logout();
-      if (mounted) {
-        Navigator.of(context).popUntil((route) => route.isFirst);
-      }
-    }
+
+    if (confirmed != true || !mounted) return;
+
+    await auth.logout();
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
-      builder: (context, auth, _) {
+      builder: (_, auth, __) {
         if (!auth.isLoggedIn) {
-          return Scaffold(
-            backgroundColor: AppColors.background,
-            appBar: AppBar(title: const Text('My Verifications')),
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock_outline,
-                      size: 56, color: AppColors.onSurface),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Please login to view your history',
-                    style: TextStyle(
-                        color: AppColors.onSurface, fontSize: 15),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: () => Navigator.of(context)
-                        .pushReplacement(MaterialPageRoute(
-                            builder: (_) => const LoginScreen())),
-                    icon: const Icon(Icons.login),
-                    label: const Text('Login'),
-                    style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(180, 48)),
-                  ),
-                ],
-              ),
-            ),
-          );
+          return _buildLoginPrompt();
         }
+
+        final user = auth.user;
 
         return Scaffold(
           backgroundColor: AppColors.background,
@@ -153,192 +148,191 @@ class _HistoryScreenState extends State<HistoryScreen> {
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('My Verifications'),
-                Text(
-                  auth.user!.name,
-                  style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.onSurface,
-                      fontWeight: FontWeight.normal),
-                ),
+                const Text("My Verifications"),
+                if (user != null)
+                  Text(
+                    user.name,
+                    style: const TextStyle(fontSize: 12),
+                  )
               ],
             ),
             actions: [
-              if (auth.user!.isOperator)
+              if (user?.isOperator ?? false)
                 Container(
-                  margin: const EdgeInsets.only(right: 4),
+                  margin: const EdgeInsets.only(right: 6),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
-                    color: AppColors.verdictMisleading.withOpacity(0.2),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                        color:
-                            AppColors.verdictMisleading.withOpacity(0.5)),
+                    color: AppColors.verdictMisleading.withOpacity(.2),
                   ),
                   child: const Text(
-                    'OPERATOR',
+                    "OPERATOR",
                     style: TextStyle(
                       fontSize: 10,
-                      color: AppColors.verdictMisleading,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
               IconButton(
-                icon: const Icon(Icons.logout_outlined,
-                    color: AppColors.onSurface),
+                icon: const Icon(Icons.logout_outlined),
                 onPressed: () => _logout(auth),
-                tooltip: 'Logout',
-              ),
+              )
             ],
           ),
-          body: Consumer<ClaimProvider>(
-            builder: (context, claimProvider, _) {
-              // Loading shimmer
-              if (claimProvider.isLoadingHistory &&
-                  claimProvider.history.isEmpty) {
-                return _buildShimmerList();
-              }
+          body: SafeArea(
+            child: Consumer<ClaimProvider>(
+              builder: (_, provider, __) {
+                if (provider.isLoadingHistory && provider.history.isEmpty) {
+                  return _buildShimmer();
+                }
 
-              // Empty state
-              if (claimProvider.history.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.history_outlined,
-                          size: 64, color: AppColors.onSurface),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'No verifications yet',
-                        style: TextStyle(
-                          color: AppColors.onSurface,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Your fact-checks will appear here',
-                        style: TextStyle(
-                            color: AppColors.onSurface, fontSize: 13),
-                      ),
-                      const SizedBox(height: 28),
-                      ElevatedButton.icon(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.shield_outlined),
-                        label: const Text('Verify a Claim'),
-                        style: ElevatedButton.styleFrom(
-                            minimumSize: const Size(180, 48)),
-                      ),
-                    ],
+                if (provider.history.isEmpty) {
+                  return _buildEmptyState();
+                }
+
+                return RefreshIndicator(
+                  onRefresh: () => _loadHistory(refresh: true),
+                  child: ListView.separated(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(16),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: provider.history.length +
+                        (provider.isLoadingHistory ? 1 : 0) +
+                        (provider.error != null ? 1 : 0),
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (_, index) {
+                      if (index < provider.history.length) {
+                        final claim = provider.history[index];
+
+                        return _HistoryCard(
+                          claim: claim,
+                          sourceIcon: _sourceIcon(claim.sourceType),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => ResultScreen(claim: claim),
+                              ),
+                            );
+                          },
+                        );
+                      }
+
+                      if (provider.isLoadingHistory) {
+                        return const Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(16),
+                            child: CircularProgressIndicator(),
+                          ),
+                        );
+                      }
+
+                      if (provider.error != null) {
+                        return _errorBanner(provider);
+                      }
+
+                      return const SizedBox.shrink();
+                    },
                   ),
                 );
-              }
-
-              // Error banner
-              return RefreshIndicator(
-                color: AppColors.primary,
-                backgroundColor: AppColors.surface,
-                onRefresh: () => _loadHistory(refresh: true),
-                child: ListView.separated(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 12),
-                  itemCount: claimProvider.history.length +
-                      (claimProvider.isLoadingHistory ? 1 : 0) +
-                      (claimProvider.error != null ? 1 : 0),
-                  separatorBuilder: (_, __) =>
-                      const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    // Important: Management of index to avoid RangeError
-                    final historyLength = claimProvider.history.length;
-                    if (index < historyLength) {
-                      final claim = claimProvider.history[index];
-                      return _HistoryCard(
-                        claim: claim,
-                        sourceIcon: _sourceIcon(claim.sourceType),
-                        onTap: () {
-                          if (!mounted) return;
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => ResultScreen(claim: claim),
-                            ),
-                          );
-                        },
-                      );
-                    }
-
-                    // Loading indicator at bottom
-                    if (claimProvider.isLoadingHistory) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(16),
-                          child: CircularProgressIndicator(
-                              color: AppColors.primary, strokeWidth: 2),
-                        ),
-                      );
-                    }
-
-                    // Error banner at bottom
-                    if (claimProvider.error != null) {
-                      return Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppColors.verdictFalse.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.error_outline,
-                                color: AppColors.verdictFalse, size: 16),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(claimProvider.error!,
-                                  style: const TextStyle(
-                                      color: AppColors.verdictFalse,
-                                      fontSize: 13)),
-                            ),
-                            TextButton(
-                              onPressed: _loadHistory,
-                              style: TextButton.styleFrom(
-                                  foregroundColor: AppColors.primary),
-                              child: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-
-                    return const SizedBox.shrink();
-                  },
-                ),
-              );
-            },
+              },
+            ),
           ),
         );
       },
     );
   }
 
-  Widget _buildShimmerList() {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: 7,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
-      itemBuilder: (_, __) => Shimmer.fromColors(
-        baseColor: AppColors.surfaceVariant,
-        highlightColor: AppColors.surface.withOpacity(0.8),
-        child: Container(
-          height: 90,
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-          ),
+  Widget _buildLoginPrompt() {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(title: const Text("My Verifications")),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.lock_outline, size: 60),
+            const SizedBox(height: 20),
+            const Text(
+              "Please login to view your history",
+              style: TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.login),
+              label: const Text("Login"),
+              onPressed: () {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const LoginScreen(),
+                  ),
+                );
+              },
+            )
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.history_outlined, size: 64),
+          SizedBox(height: 16),
+          Text("No verifications yet"),
+          SizedBox(height: 8),
+          Text("Your fact-checks will appear here"),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorBanner(ClaimProvider provider) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.verdictFalse.withOpacity(.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline),
+          const SizedBox(width: 8),
+          Expanded(child: Text(provider.error!)),
+          TextButton(
+            onPressed: _loadHistory,
+            child: const Text("Retry"),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShimmer() {
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: 6,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (_, __) {
+        return Shimmer.fromColors(
+          baseColor: AppColors.surfaceVariant,
+          highlightColor: AppColors.surface.withOpacity(.8),
+          child: Container(
+            height: 90,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -356,7 +350,8 @@ class _HistoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(14),
@@ -364,17 +359,17 @@ class _HistoryCard extends StatelessWidget {
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-              color: claim.verdictColor.withOpacity(0.22), width: 1),
+            color: claim.verdictColor.withOpacity(.25),
+          ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Verdict badge
             VerdictBadge(
-                verdict: claim.llmVerdict,
-                size: VerdictBadgeSize.small),
+              verdict: claim.llmVerdict,
+              size: VerdictBadgeSize.small,
+            ),
             const SizedBox(width: 12),
-            // Content
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -383,46 +378,41 @@ class _HistoryCard extends StatelessWidget {
                     claim.displayClaim,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.onBackground,
-                      height: 1.4,
-                    ),
+                    style: const TextStyle(height: 1.4),
                   ),
                   const SizedBox(height: 7),
                   Row(
                     children: [
-                      Icon(sourceIcon,
-                          size: 12, color: AppColors.onSurface),
+                      Icon(sourceIcon, size: 12),
                       const SizedBox(width: 4),
                       Text(
-                        claim.platform ?? 'unknown',
-                        style: const TextStyle(
-                            fontSize: 11, color: AppColors.onSurface),
+                        claim.platform ?? "unknown",
+                        style: const TextStyle(fontSize: 11),
                       ),
                       const SizedBox(width: 10),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 2),
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
-                          color: AppColors.riskColor(claim.riskLevel)
-                              .withOpacity(0.12),
                           borderRadius: BorderRadius.circular(6),
+                          color: AppColors.riskColor(claim.riskLevel)
+                              .withOpacity(.12),
                         ),
                         child: Text(
                           claim.riskLevel,
                           style: TextStyle(
                             fontSize: 10,
-                            color: AppColors.riskColor(claim.riskLevel),
                             fontWeight: FontWeight.w700,
+                            color: AppColors.riskColor(claim.riskLevel),
                           ),
                         ),
                       ),
                       const Spacer(),
                       Text(
                         claim.timeAgo,
-                        style: const TextStyle(
-                            fontSize: 10, color: AppColors.onSurface),
+                        style: const TextStyle(fontSize: 10),
                       ),
                     ],
                   ),
@@ -430,8 +420,7 @@ class _HistoryCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 4),
-            const Icon(Icons.chevron_right,
-                color: AppColors.onSurface, size: 18),
+            const Icon(Icons.chevron_right, size: 18),
           ],
         ),
       ),
