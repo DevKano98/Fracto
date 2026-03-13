@@ -1,76 +1,195 @@
-import logging
+"""
+sarvam_service.py
 
-import requests
-from requests.exceptions import RequestException
+Handles Sarvam AI APIs:
+- Speech to Text (STT)
+- Text to Speech (TTS)
+- Language Detection
+
+Features:
+- async HTTP client (httpx)
+- retries with exponential backoff
+- robust error handling
+- JSON validation
+- audio size validation
+"""
+
+import base64
+import logging
+import asyncio
+from typing import Optional
+
+import httpx
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-SARVAM_HEADERS = {"api-subscription-key": settings.SARVAM_API_KEY}
+SARVAM_BASE = "https://api.sarvam.ai"
 
-VOICE_MAP = {
-    "hi-IN": "meera",
-    "default": "meera",
+HEADERS = {
+    "api-subscription-key": settings.SARVAM_API_KEY,
+    "Accept": "application/json",
 }
 
+VOICE_MAP = {
+    "hi-IN": "ritu",
+    "en-IN": "ritu",
+    "default": "ritu",
+}
 
-def speech_to_text(audio_bytes: bytes, language: str = "hi-IN", filename: str = "audio.wav", content_type: str = "audio/wav") -> str:
-    try:
+MAX_AUDIO_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+class SarvamService:
+    def __init__(self):
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+
+    async def _post_with_retry(self, url: str, **kwargs) -> Optional[dict]:
+        retries = 3
+
+        for attempt in range(retries):
+            try:
+                response = await self.client.post(url, **kwargs)
+                response.raise_for_status()
+                return response.json()
+
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    "Sarvam HTTP error %s: %s",
+                    exc.response.status_code,
+                    exc.response.text,
+                )
+
+            except httpx.RequestError as exc:
+                logger.error("Sarvam network error: %s", exc)
+
+            except Exception as exc:
+                logger.error("Sarvam unexpected error: %s", exc)
+
+            if attempt < retries - 1:
+                wait = 2 ** attempt
+                await asyncio.sleep(wait)
+
+        return None
+
+    async def speech_to_text(
+        self,
+        audio_bytes: bytes,
+        language: str = "hi-IN",
+        filename: str = "audio.wav",
+        content_type: str = "audio/wav",
+    ) -> str:
+        """
+        Convert speech audio to text using Sarvam STT.
+        """
+
+        if not audio_bytes:
+            return ""
+
+        if len(audio_bytes) > MAX_AUDIO_SIZE:
+            logger.warning("Audio file too large for STT")
+            return ""
+
         files = {"file": (filename, audio_bytes, content_type)}
-        data = {"language_code": language, "model": "saarika:v2"}
-        response = requests.post(
-            "https://api.sarvam.ai/speech-to-text",
-            headers=SARVAM_HEADERS,
+
+        data = {
+            "language_code": language,
+            "model": "saaras:v3",
+        }
+
+        result = await self._post_with_retry(
+            f"{SARVAM_BASE}/speech-to-text",
+            headers=HEADERS,
             files=files,
             data=data,
-            timeout=30,
         )
-        response.raise_for_status()
-        result = response.json()
-        return result.get("transcript", "")
-    except RequestException as exc:
-        logger.error("Sarvam STT error: %s", exc)
-        return ""
 
+        if not result:
+            return ""
 
-def text_to_speech(text: str, language: str = "hi-IN") -> bytes:
-    try:
+        transcript = result.get("transcript", "")
+        return transcript.strip()
+
+    async def text_to_speech(self, text: str, language: str = "hi-IN") -> bytes:
+        """
+        Convert text to speech using Sarvam TTS.
+        """
+
+        if not text:
+            return b""
+
+        # prevent extremely long requests
+        text = text[:1000]
+
         speaker = VOICE_MAP.get(language, VOICE_MAP["default"])
+
         payload = {
-            "inputs": [text],
+            "input": text,
             "target_language_code": language,
             "speaker": speaker,
-            "model": "bulbul:v1",
+            "model": "bulbul:v3",
             "speech_sample_rate": 22050,
         }
-        response = requests.post(
-            "https://api.sarvam.ai/text-to-speech",
-            headers={**SARVAM_HEADERS, "Content-Type": "application/json"},
+
+        result = await self._post_with_retry(
+            f"{SARVAM_BASE}/text-to-speech",
+            headers={**HEADERS, "Content-Type": "application/json"},
             json=payload,
-            timeout=30,
         )
-        response.raise_for_status()
-        import base64
-        audios = response.json().get("audios", [])
-        if audios:
+
+        if not result:
+            return b""
+
+        audios = result.get("audios", [])
+
+        if not audios:
+            return b""
+
+        try:
             return base64.b64decode(audios[0])
-        return b""
-    except RequestException as exc:
-        logger.error("Sarvam TTS error: %s", exc)
-        return b""
+        except Exception as exc:
+            logger.error("Sarvam TTS decode error: %s", exc)
+            return b""
 
+    async def detect_language(self, text: str) -> str:
+        """
+        Detect language using Sarvam language identification.
+        """
 
-def detect_language(text: str) -> str:
-    try:
-        response = requests.post(
-            "https://api.sarvam.ai/text-lid",
-            headers={**SARVAM_HEADERS, "Content-Type": "application/json"},
-            json={"input": text},
-            timeout=10,
+        if not text:
+            return "en-IN"
+
+        payload = {"input": text}
+
+        result = await self._post_with_retry(
+            f"{SARVAM_BASE}/text-lid",
+            headers={**HEADERS, "Content-Type": "application/json"},
+            json=payload,
         )
-        response.raise_for_status()
-        return response.json().get("language_code", "en-IN")
-    except RequestException as exc:
-        logger.error("Sarvam language detect error: %s", exc)
+
+        if not result:
+            return self._fallback_language(text)
+
+        return result.get("language_code", "en-IN")
+
+    def _fallback_language(self, text: str) -> str:
+        """
+        Fallback language detection based on unicode.
+        """
+
+        devanagari_count = sum(1 for ch in text if "\u0900" <= ch <= "\u097F")
+
+        if devanagari_count > len(text) * 0.2:
+            return "hi-IN"
+
         return "en-IN"
+
+    async def close(self):
+        await self.client.aclose()
+
+
+sarvam_service = SarvamService()

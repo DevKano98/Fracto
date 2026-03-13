@@ -1,8 +1,11 @@
+import asyncio
 import logging
 import os
+import re
+from typing import Optional
 
+import httpx
 import replicate
-import requests
 
 from app.config import settings
 from app.database.queries import insert_blog_post
@@ -13,88 +16,159 @@ logger = logging.getLogger(__name__)
 
 os.environ["REPLICATE_API_TOKEN"] = settings.REPLICATE_API_TOKEN
 
-SDXL_MODEL = "google/imagen-4"  # Updated to Imagen 4 for better image quality
+IMAGE_MODEL = "google/imagen-4"
+
+IMAGE_NEGATIVE_PROMPT = "text, watermark, logo, letters, words"
+
+MAX_IMAGE_DOWNLOAD = 10 * 1024 * 1024  # 10MB
 
 
-async def auto_generate_blog(claim_data: dict) -> dict | None:
+def _safe_slug(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower())
+    slug = slug.strip("-")
+    return slug[:80]
+
+
+async def _download_image(url: str) -> bytes:
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url)
+
+            resp.raise_for_status()
+
+            if len(resp.content) > MAX_IMAGE_DOWNLOAD:
+                logger.warning("Image too large from replicate")
+                return b""
+
+            return resp.content
+
+    except Exception as exc:
+        logger.error("Image download error: %s", exc)
+        return b""
+
+
+async def _generate_image(prompt: str) -> bytes:
+
+    retries = 2
+
+    for attempt in range(retries):
+
+        try:
+
+            output = replicate.run(
+                IMAGE_MODEL,
+                input={
+                    "prompt": prompt,
+                    "negative_prompt": IMAGE_NEGATIVE_PROMPT,
+                    "num_outputs": 1,
+                    "guidance_scale": 7.5,
+                    "num_inference_steps": 50,
+                },
+            )
+
+            image_url = None
+
+            if isinstance(output, list) and output:
+                image_url = output[0]
+
+            elif isinstance(output, str):
+                image_url = output
+
+            elif isinstance(output, dict):
+                image_url = output.get("url")
+
+            if not image_url:
+                return b""
+
+            return await _download_image(image_url)
+
+        except Exception as exc:
+
+            logger.error("Replicate generation error: %s", exc)
+
+            if attempt < retries - 1:
+                await asyncio.sleep(2)
+
+    return b""
+
+
+async def auto_generate_blog(claim_data: dict) -> Optional[dict]:
+
     risk_score = claim_data.get("risk_score", 0)
     verdict = claim_data.get("llm_verdict", "UNVERIFIED")
 
     if risk_score < settings.RISK_BLOG_THRESHOLD:
-        logger.info("Skipping blog generation: risk_score=%.1f below threshold", risk_score)
+        logger.info(
+            "Skipping blog generation: risk_score %.2f below threshold",
+            risk_score,
+        )
         return None
 
     if verdict == "TRUE":
-        logger.info("Skipping blog generation: verdict is TRUE")
+        logger.info("Skipping blog generation: claim verified TRUE")
         return None
 
     try:
-        # Step 1: Generate blog content via Gemini
+
         blog_content = await generate_blog_content(claim_data)
-        slug = blog_content.get("slug", "")
-        image_prompt = blog_content.get("image_prompt", "India fact-check journalism illustration")
 
-        # Step 2: Generate image via Replicate
-        image_bytes = b""
-        try:
-            logger.info("Generating image with prompt: %s", image_prompt)
-            output = replicate.run(
-                SDXL_MODEL,
-                input={
-                    "prompt": image_prompt,
-                    "negative_prompt": "text, words, letters, watermark, logo",
-                    "num_outputs": 1,
-                    "scheduler": "K_EULER",
-                    "num_inference_steps": 50,
-                    "guidance_scale": 7.5,
-                },
-            )
-            logger.info("Replicate output: %s", output)
-            
-            # Handle list or string output
-            image_url_from_replicate = None
-            if isinstance(output, list) and len(output) > 0:
-                image_url_from_replicate = output[0]
-            elif isinstance(output, str):
-                image_url_from_replicate = output
-            elif isinstance(output, dict):
-                image_url_from_replicate = output.get("url")
+        if not blog_content:
+            logger.warning("Blog content generation returned empty")
+            return None
 
-            # Step 3: Download image bytes
-            if image_url_from_replicate:
-                logger.info("Downloading image from: %s", image_url_from_replicate)
-                resp = requests.get(image_url_from_replicate, timeout=30)
-                resp.raise_for_status()
-                image_bytes = resp.content
-        except Exception as exc:
-            logger.error("Replicate image generation error: %s", exc)
+        title = blog_content.get("title", "")
+        summary = blog_content.get("summary", "")
+        content = blog_content.get("content", "")
+        tags = blog_content.get("tags", [])
 
-        # Step 4: Upload to Cloudinary
+        slug = blog_content.get("slug") or _safe_slug(
+            claim_data.get("extracted_claim", "fact-check")
+        )
+
+        image_prompt = blog_content.get(
+            "image_prompt",
+            "Indian fact-check journalism illustration newsroom style",
+        )
+
+        image_bytes = await _generate_image(image_prompt)
+
         cloudinary_result = {"url": "", "public_id": ""}
-        if image_bytes:
-            cloudinary_result = await upload_blog_image(image_bytes, slug)
 
-        # Step 5: Insert blog post to Supabase
+        if image_bytes:
+
+            try:
+                cloudinary_result = await upload_blog_image(
+                    image_bytes,
+                    slug,
+                )
+            except Exception as exc:
+                logger.error("Cloudinary upload error: %s", exc)
+
         blog_row = {
             "claim_id": claim_data.get("id"),
-            "title": blog_content.get("title", ""),
+            "title": title,
             "slug": slug,
-            "summary": blog_content.get("summary", ""),
-            "content": blog_content.get("content", ""),
+            "summary": summary,
+            "content": content,
             "cover_image": cloudinary_result.get("url", ""),
             "cloudinary_public_id": cloudinary_result.get("public_id", ""),
             "verdict": verdict,
             "risk_score": risk_score,
             "sources": claim_data.get("sources", []),
-            "tags": blog_content.get("tags", []),
+            "tags": tags,
             "category": claim_data.get("ml_category", "UNKNOWN"),
             "published": True,
             "auto_generated": True,
         }
+
         inserted = insert_blog_post(blog_row)
-        logger.info("Blog post created: slug=%s", slug)
+
+        logger.info("Blog generated successfully: %s", slug)
+
         return inserted
 
     except Exception as exc:
+
         logger.error("auto_generate_blog failed: %s", exc)
+
         return None

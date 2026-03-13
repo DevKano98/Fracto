@@ -124,7 +124,7 @@ async def startup_event():
     logger.info("🟢 Fracta API v2.0.0 ready — RAG pipeline active")
 
 
-@app.get("/health", tags=["Health"])
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
 async def health_check():
     return {
         "status": "ok",
