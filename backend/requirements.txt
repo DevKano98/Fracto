@@ -29,6 +29,6 @@ pytest==8.3.5
 pytest-asyncio==0.25.3
 gunicorn==21.2.0
 python-jose[cryptography]
-passlib[bcrypt]
+passlib[argon2]
 praw==7.7.1
 telethon==1.36.0
