@@ -20,6 +20,11 @@ class AppConstants {
   static const String refreshTokenKey = "fracta_refresh_token";
   static const String userJsonKey = "fracta_user_json";
 
+  // Voice assistant keys
+  static const String assistantNameKey = 'fracta_assistant_name';
+  static const String defaultAssistantName = 'Siri';
+  static const String defaultWakePhrase = 'hey siri';
+
   // Platform options
   static const List<String> platforms = [
     "unknown",

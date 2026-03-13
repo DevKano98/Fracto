@@ -12,7 +12,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=settings.GEMINI_KEY_1)
-_ocr_model = genai.GenerativeModel("gemini-2.0-flash")
+_ocr_model = genai.GenerativeModel("gemini-3-flash-preview")
 
 
 def _b64(image_bytes: bytes) -> str:

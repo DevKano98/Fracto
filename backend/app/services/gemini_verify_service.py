@@ -17,7 +17,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=settings.GEMINI_KEY_2)
-_verify_model = genai.GenerativeModel("gemini-2.0-flash")
+_verify_model = genai.GenerativeModel("gemini-3-flash-preview")
 
 SYSTEM_INSTRUCTION = """You are Fracta, India's AI misinformation defense system.
 Analyze the given claim. Use available tools to find evidence.
@@ -135,11 +135,23 @@ async def verify_claim(
     )
 
     loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(
-        None, lambda: _verify_model.generate_content(prompt)
-    )
-    raw = response.text.strip()
-    parsed = _parse_verification(raw)
+    try:
+        response = await loop.run_in_executor(
+            None, lambda: _verify_model.generate_content(prompt)
+        )
+        raw = response.text.strip()
+        parsed = _parse_verification(raw)
+    except Exception as e:
+        logger.error(f"Gemini API error: {e}")
+        # Return a fallback response when API fails
+        parsed = {
+            "verdict": "UNVERIFIED",
+            "confidence": 0.0,
+            "evidence": "Service temporarily unavailable due to API limits",
+            "sources": [],
+            "reasoning_steps": ["API quota exceeded or service error"],
+            "corrective_response": "Please try again later. Service is experiencing high demand.",
+        }
 
     if rag_sources_for_response:
         existing = set(parsed["sources"])

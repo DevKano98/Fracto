@@ -24,6 +24,18 @@ dependencies:
   intl: ^0.19.0
   path_provider: ^2.1.4
   mime: ^1.0.6
+  # Background service — keeps Fracta alive when app is not in foreground
+  flutter_background_service: ^5.0.5
+  # Foreground notification while service runs
+  flutter_local_notifications: ^17.2.2
+  # Floating overlay button (draw-over-apps permission)
+  flutter_overlay_window: ^0.5.0
+  # Receive shared text/URLs from other apps (WhatsApp forwards etc.)
+  receive_sharing_intent: ^1.8.0
+  # Speech recognition for voice assistant
+  speech_to_text: ^7.3.0
+  # Text-to-speech for voice assistant
+  flutter_tts: ^4.0.2
 
 dev_dependencies:
   flutter_test:

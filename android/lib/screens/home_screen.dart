@@ -4,21 +4,30 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../constants.dart';
 import '../models/claim_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/claim_provider.dart';
+import '../services/background_service.dart';
+import '../services/share_handler_service.dart';
+import '../services/overlay_service.dart';
+import '../services/voice_assistant_service.dart';
+import 'assistant_overlay_screen.dart';
 import '../theme.dart';
 import '../widgets/input_type_selector.dart';
 import '../widgets/verdict_badge.dart';
 import 'history_screen.dart';
 import 'loading_screen.dart';
 import 'login_screen.dart';
+import 'quick_capture_screen.dart';
 import 'result_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -42,11 +51,99 @@ class _HomeScreenState extends State<HomeScreen> {
   final AudioRecorder _recorder = AudioRecorder();
   bool _historyLoaded = false;
 
+  // ── Background service + share wiring ─────────────────────────────
+  final ShareHandlerService _shareHandler = ShareHandlerService();
+  StreamSubscription? _verdictSub;
+  StreamSubscription? _overlaySub;
+  bool _serviceStarted = false;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _loadHistoryIfLoggedIn());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadHistoryIfLoggedIn();
+      await _startBackgroundServiceIfNeeded();
+      _wireShareHandler();
+      _wireOverlayMessages();
+      _wireVerdictStream();
+      _wireVoiceAssistant();
+    });
+  }
+
+  // ── Start background service after permissions ─────────────────────
+  Future<void> _startBackgroundServiceIfNeeded() async {
+    if (_serviceStarted) return;
+    _serviceStarted = true;
+
+    // Request notification permission (Android 13+)
+    await Permission.notification.request();
+    // Request microphone (needed for voice input + foreground service type)
+    await Permission.microphone.request();
+
+    final running = await FractaBackgroundService.isRunning;
+    if (!running) await FractaBackgroundService.start();
+
+    // Restore bubble if it was on before
+    final wasOn = await OverlayService.wasBubbleEnabled;
+    if (wasOn) {
+      final hasPerm = await OverlayService.hasPermission;
+      if (hasPerm) await OverlayService.showBubble();
+    }
+  }
+
+  // ── Wire share-from-other-apps ─────────────────────────────────────
+  void _wireShareHandler() {
+    _shareHandler.initialize(
+      onTextReceived: (text, sourceApp) {
+        // Show quick-capture sheet pre-filled with the shared text
+        if (mounted) {
+          QuickCaptureScreen.show(context, sharedText: text);
+        }
+      },
+      onUrlReceived: (url, sourceApp) {
+        if (mounted) {
+          QuickCaptureScreen.show(context, sharedUrl: url);
+        }
+      },
+    );
+  }
+
+  // ── Wire overlay bubble tap → open quick-capture ───────────────────
+  void _wireOverlayMessages() {
+    _overlaySub = OverlayService.overlayMessages.listen((data) {
+      if (data is Map && data['action'] == 'open_capture') {
+        if (mounted) QuickCaptureScreen.show(context);
+      }
+    });
+  }
+
+  // ── Wire background service verdict → navigate to result ──────────
+  void _wireVerdictStream() {
+    _verdictSub = FractaBackgroundService.verdictStream.listen((data) {
+      if (data != null && mounted) {
+        final claim = ClaimModel.fromJson(data);
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => ResultScreen(claim: claim)),
+        );
+      }
+    });
+  }
+
+  // ── Wire voice assistant events → show overlay ───────────────────
+  void _wireVoiceAssistant() {
+    final assistant = context.read<VoiceAssistantService>();
+    assistant.initialize().then((_) {
+      assistant.startListening();
+    });
+
+    assistant.events.listen((state) {
+      if (state == VoiceAssistantState.woken ||
+          state == VoiceAssistantState.listening ||
+          state == VoiceAssistantState.processing ||
+          state == VoiceAssistantState.speaking) {
+        if (mounted) AssistantOverlayScreen.show(context);
+      }
+    });
   }
 
   Future<void> _loadHistoryIfLoggedIn() async {
@@ -65,6 +162,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _urlController.dispose();
     _recordingTimer?.cancel();
     _recorder.dispose();
+    _shareHandler.dispose();
+    _verdictSub?.cancel();
+    _overlaySub?.cancel();
     super.dispose();
   }
 
@@ -181,8 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         final urlStr = _urlController.text.trim();
         if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
-          _showError(
-              'Please enter a valid URL starting with http:// or https://');
+          _showError('Please enter a valid URL starting with http:// or https://');
           return;
         }
         break;
@@ -262,11 +361,21 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             actions: [
+              // Settings (always visible)
+              IconButton(
+                icon: const Icon(Icons.settings_outlined,
+                    color: AppColors.onSurface),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                ),
+                tooltip: 'Settings',
+              ),
               if (auth.isLoggedIn) ...[
                 IconButton(
                   icon: const Icon(Icons.history, color: AppColors.onSurface),
                   onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const HistoryScreen()),
+                    MaterialPageRoute(
+                        builder: (_) => const HistoryScreen()),
                   ),
                   tooltip: 'History',
                 ),
@@ -274,7 +383,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.only(right: 12),
                   child: GestureDetector(
                     onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const HistoryScreen()),
+                      MaterialPageRoute(
+                          builder: (_) => const HistoryScreen()),
                     ),
                     child: Stack(
                       alignment: Alignment.bottomRight,
@@ -322,7 +432,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 // Tagline
                 const Text(
                   'From claim to correction in under 6 seconds',
-                  style: TextStyle(color: AppColors.onSurface, fontSize: 12),
+                  style: TextStyle(
+                      color: AppColors.onSurface, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
 
@@ -353,8 +464,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Center(
                     child: Text(
                       'Login to save your verification history',
-                      style:
-                          TextStyle(color: AppColors.onSurface, fontSize: 12),
+                      style: TextStyle(
+                          color: AppColors.onSurface, fontSize: 12),
                     ),
                   ),
                 ],
@@ -382,7 +493,8 @@ class _HomeScreenState extends State<HomeScreen> {
               maxLines: 5,
               style: const TextStyle(color: AppColors.onBackground),
               decoration: const InputDecoration(
-                hintText: 'Paste WhatsApp forward, news claim, or any text...',
+                hintText:
+                    'Paste WhatsApp forward, news claim, or any text...',
                 alignLabelWithHint: true,
               ),
             ),
@@ -474,7 +586,8 @@ class _HomeScreenState extends State<HomeScreen> {
               style: const TextStyle(color: AppColors.onBackground),
               decoration: const InputDecoration(
                 hintText: 'Paste article or social media link',
-                prefixIcon: Icon(Icons.link, color: AppColors.onSurface),
+                prefixIcon:
+                    Icon(Icons.link, color: AppColors.onSurface),
               ),
             ),
             const SizedBox(height: 12),
@@ -505,8 +618,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         boxShadow: _isRecording
                             ? [
                                 BoxShadow(
-                                  color:
-                                      AppColors.verdictFalse.withOpacity(0.5),
+                                  color: AppColors.verdictFalse
+                                      .withOpacity(0.5),
                                   blurRadius: 20,
                                   spreadRadius: 4,
                                 )
@@ -552,7 +665,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: DropdownButtonFormField<String>(
             value: _platform,
             dropdownColor: AppColors.surface,
-            style: const TextStyle(color: AppColors.onBackground, fontSize: 14),
+            style: const TextStyle(
+                color: AppColors.onBackground, fontSize: 14),
             decoration: const InputDecoration(
               labelText: 'Platform',
               contentPadding:
@@ -601,7 +715,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 TextButton(
                   onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const HistoryScreen()),
+                    MaterialPageRoute(
+                        builder: (_) => const HistoryScreen()),
                   ),
                   style: TextButton.styleFrom(
                     foregroundColor: AppColors.primary,
@@ -609,20 +724,22 @@ class _HomeScreenState extends State<HomeScreen> {
                     minimumSize: Size.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
-                  child:
-                      const Text('See all →', style: TextStyle(fontSize: 13)),
+                  child: const Text('See all →',
+                      style: TextStyle(fontSize: 13)),
                 ),
               ],
             ),
             const SizedBox(height: 12),
-            if (claimProvider.isLoadingHistory && claimProvider.history.isEmpty)
+            if (claimProvider.isLoadingHistory &&
+                claimProvider.history.isEmpty)
               const Center(
                   child: CircularProgressIndicator(
                       color: AppColors.primary, strokeWidth: 2))
             else if (claimProvider.history.isEmpty)
               const Text(
                 'No verifications yet',
-                style: TextStyle(color: AppColors.onSurface, fontSize: 13),
+                style:
+                    TextStyle(color: AppColors.onSurface, fontSize: 13),
               )
             else
               SizedBox(
@@ -630,14 +747,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: claimProvider.history.take(3).length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(width: 12),
                   itemBuilder: (context, index) {
                     final claim = claimProvider.history[index];
                     return _ClaimCard(
                       claim: claim,
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                            builder: (_) => ResultScreen(claim: claim)),
+                            builder: (_) =>
+                                ResultScreen(claim: claim)),
                       ),
                     );
                   },
@@ -666,31 +785,32 @@ class _ClaimCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(12),
-          border:
-              Border.all(color: claim.verdictColor.withOpacity(0.3), width: 1),
+          border: Border.all(
+              color: claim.verdictColor.withOpacity(0.3), width: 1),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             VerdictBadge(
-                verdict: claim.llmVerdict, size: VerdictBadgeSize.small),
+                verdict: claim.llmVerdict,
+                size: VerdictBadgeSize.small),
             const SizedBox(height: 8),
             Text(
               claim.displayClaim,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style:
-                  const TextStyle(fontSize: 12, color: AppColors.onBackground),
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.onBackground),
             ),
             const Spacer(),
             Row(
               children: [
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color:
-                        AppColors.riskColor(claim.riskLevel).withOpacity(0.15),
+                    color: AppColors.riskColor(claim.riskLevel)
+                        .withOpacity(0.15),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
@@ -705,8 +825,8 @@ class _ClaimCard extends StatelessWidget {
                 const Spacer(),
                 Text(
                   claim.timeAgo,
-                  style:
-                      const TextStyle(fontSize: 10, color: AppColors.onSurface),
+                  style: const TextStyle(
+                      fontSize: 10, color: AppColors.onSurface),
                 ),
               ],
             ),
