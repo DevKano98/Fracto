@@ -1,0 +1,722 @@
+// ========== FILE: lib/screens/home_screen.dart ==========
+
+import 'dart:io';
+import 'dart:typed_data';
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
+import '../constants.dart';
+import '../models/claim_model.dart';
+import '../providers/auth_provider.dart';
+import '../providers/claim_provider.dart';
+import '../theme.dart';
+import '../widgets/input_type_selector.dart';
+import '../widgets/verdict_badge.dart';
+import 'history_screen.dart';
+import 'loading_screen.dart';
+import 'login_screen.dart';
+import 'result_screen.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  InputType _selectedType = InputType.text;
+  final _textController = TextEditingController();
+  final _urlController = TextEditingController();
+  String _platform = 'unknown';
+  int _shares = 0;
+  XFile? _selectedImage;
+  bool _isRecording = false;
+  bool _hasRecording = false;
+  String? _recordingPath;
+  Duration _recordingDuration = Duration.zero;
+  Timer? _recordingTimer;
+  final AudioRecorder _recorder = AudioRecorder();
+  bool _historyLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadHistoryIfLoggedIn());
+  }
+
+  Future<void> _loadHistoryIfLoggedIn() async {
+    if (_historyLoaded) return;
+    final authProvider = context.read<AuthProvider>();
+    if (!authProvider.isLoggedIn) return;
+    final token = await authProvider.getAccessToken();
+    if (token == null || token.isEmpty) return;
+    _historyLoaded = true;
+    await context.read<ClaimProvider>().loadHistory(token, refresh: true);
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    _urlController.dispose();
+    _recordingTimer?.cancel();
+    _recorder.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    Navigator.of(context).pop();
+    final picker = ImagePicker();
+    final image = await picker.pickImage(
+      source: source,
+      imageQuality: 85,
+      maxWidth: 1920,
+    );
+    if (image != null) setState(() => _selectedImage = image);
+  }
+
+  void _showImagePickerSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined,
+                  color: AppColors.primary),
+              title: const Text('Take Photo',
+                  style: TextStyle(color: AppColors.onBackground)),
+              onTap: () => _pickImage(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined,
+                  color: AppColors.primary),
+              title: const Text('Choose from Gallery',
+                  style: TextStyle(color: AppColors.onBackground)),
+              onTap: () => _pickImage(ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      _recordingTimer?.cancel();
+      final path = await _recorder.stop();
+      setState(() {
+        _isRecording = false;
+        _hasRecording = path != null;
+        _recordingPath = path;
+      });
+    } else {
+      final hasPermission = await _recorder.hasPermission();
+      if (!hasPermission) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission required')),
+          );
+        }
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/fracta_recording_${DateTime.now().millisecondsSinceEpoch}.wav';
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.wav),
+        path: path,
+      );
+      setState(() {
+        _isRecording = true;
+        _hasRecording = false;
+        _recordingDuration = Duration.zero;
+      });
+      _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted && _isRecording) {
+          setState(() => _recordingDuration += const Duration(seconds: 1));
+        }
+      });
+    }
+  }
+
+  String _formatDuration(Duration d) {
+    final min = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final sec = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$min:$sec';
+  }
+
+  Future<void> _verifyClaim() async {
+    // Validate input
+    switch (_selectedType) {
+      case InputType.text:
+        if (_textController.text.trim().isEmpty) {
+          _showError('Please enter a claim to verify');
+          return;
+        }
+        break;
+      case InputType.image:
+        if (_selectedImage == null) {
+          _showError('Please select an image');
+          return;
+        }
+        break;
+      case InputType.url:
+        if (_urlController.text.trim().isEmpty) {
+          _showError('Please enter a URL');
+          return;
+        }
+        final urlStr = _urlController.text.trim();
+        if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+          _showError('Please enter a valid URL starting with http:// or https://');
+          return;
+        }
+        break;
+      case InputType.voice:
+        if (!_hasRecording || _recordingPath == null) {
+          _showError('Please record a voice clip first');
+          return;
+        }
+        break;
+    }
+
+    final authProvider = context.read<AuthProvider>();
+    String? accessToken = await authProvider.getAccessToken();
+
+    // Read bytes if needed
+    List<int>? imageBytes;
+    String? imageFilename;
+    if (_selectedType == InputType.image && _selectedImage != null) {
+      imageBytes = await _selectedImage!.readAsBytes();
+      imageFilename = _selectedImage!.name;
+    }
+
+    List<int>? audioBytes;
+    String? audioFilename;
+    if (_selectedType == InputType.voice && _recordingPath != null) {
+      audioBytes = await File(_recordingPath!).readAsBytes();
+      audioFilename = 'recording.wav';
+    }
+
+    if (!mounted) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LoadingScreen(
+          inputType: _selectedType,
+          text: _textController.text.trim(),
+          imageBytes: imageBytes,
+          imageFilename: imageFilename,
+          url: _urlController.text.trim(),
+          audioBytes: audioBytes,
+          audioFilename: audioFilename,
+          platform: _platform,
+          shares: _shares,
+          accessToken: accessToken,
+        ),
+      ),
+    );
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthProvider>(
+      builder: (context, auth, _) {
+        return Scaffold(
+          backgroundColor: AppColors.background,
+          appBar: AppBar(
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.shield_rounded,
+                    color: AppColors.primary, size: 22),
+                const SizedBox(width: 6),
+                const Text(
+                  'Fracta',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 20,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              if (auth.isLoggedIn) ...[
+                IconButton(
+                  icon: const Icon(Icons.history, color: AppColors.onSurface),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const HistoryScreen()),
+                  ),
+                  tooltip: 'History',
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: GestureDetector(
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const HistoryScreen()),
+                    ),
+                    child: Stack(
+                      alignment: Alignment.bottomRight,
+                      children: [
+                        CircleAvatar(
+                          radius: 18,
+                          backgroundColor: AppColors.primary,
+                          child: Text(
+                            auth.user!.initials,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                        if (auth.user!.isOperator)
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: const BoxDecoration(
+                              color: AppColors.verdictMisleading,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ] else
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  ),
+                  child: const Text('Login',
+                      style: TextStyle(color: AppColors.primary)),
+                ),
+            ],
+          ),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Tagline
+                const Text(
+                  'From claim to correction in under 6 seconds',
+                  style: TextStyle(
+                      color: AppColors.onSurface, fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+
+                // Input type selector
+                InputTypeSelector(
+                  selected: _selectedType,
+                  onChanged: (t) {
+                    setState(() {
+                      _selectedType = t;
+                    });
+                  },
+                ),
+                const SizedBox(height: 20),
+
+                // Dynamic input area
+                _buildInputArea(),
+                const SizedBox(height: 20),
+
+                // Verify button
+                ElevatedButton.icon(
+                  onPressed: _verifyClaim,
+                  icon: const Icon(Icons.shield_outlined),
+                  label: const Text('Verify Claim'),
+                ),
+
+                if (!auth.isLoggedIn) ...[
+                  const SizedBox(height: 8),
+                  const Center(
+                    child: Text(
+                      'Login to save your verification history',
+                      style: TextStyle(
+                          color: AppColors.onSurface, fontSize: 12),
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 28),
+
+                // Recent verifications (only if logged in)
+                if (auth.isLoggedIn) _buildRecentSection(context),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInputArea() {
+    switch (_selectedType) {
+      case InputType.text:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _textController,
+              maxLines: 5,
+              style: const TextStyle(color: AppColors.onBackground),
+              decoration: const InputDecoration(
+                hintText:
+                    'Paste WhatsApp forward, news claim, or any text...',
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildPlatformShareRow(),
+          ],
+        );
+
+      case InputType.image:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: _showImagePickerSheet,
+              child: Container(
+                height: 200,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: AppColors.primary.withOpacity(0.5),
+                    width: 1.5,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  color: AppColors.surfaceVariant,
+                ),
+                child: _selectedImage == null
+                    ? const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_photo_alternate_outlined,
+                              size: 44, color: AppColors.primary),
+                          SizedBox(height: 10),
+                          Text(
+                            'Tap to upload image or take photo',
+                            style: TextStyle(
+                                color: AppColors.onSurface, fontSize: 13),
+                          ),
+                        ],
+                      )
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            FutureBuilder<Uint8List>(
+                              future: _selectedImage!.readAsBytes(),
+                              builder: (_, snap) {
+                                if (snap.hasData) {
+                                  return Image.memory(snap.data!,
+                                      fit: BoxFit.cover);
+                                }
+                                return const Center(
+                                    child: CircularProgressIndicator(
+                                        color: AppColors.primary));
+                              },
+                            ),
+                            Positioned(
+                              bottom: 8,
+                              right: 8,
+                              child: ElevatedButton.icon(
+                                onPressed: _showImagePickerSheet,
+                                icon: const Icon(Icons.swap_horiz, size: 14),
+                                label: const Text('Change'),
+                                style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size(0, 34),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12),
+                                  textStyle: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildPlatformShareRow(),
+          ],
+        );
+
+      case InputType.url:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _urlController,
+              keyboardType: TextInputType.url,
+              style: const TextStyle(color: AppColors.onBackground),
+              decoration: const InputDecoration(
+                hintText: 'Paste article or social media link',
+                prefixIcon:
+                    Icon(Icons.link, color: AppColors.onSurface),
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildPlatformShareRow(),
+          ],
+        );
+
+      case InputType.voice:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Column(
+                children: [
+                  GestureDetector(
+                    onTap: _toggleRecording,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _isRecording
+                            ? AppColors.verdictFalse
+                            : _hasRecording
+                                ? AppColors.verdictTrue
+                                : AppColors.surfaceVariant,
+                        boxShadow: _isRecording
+                            ? [
+                                BoxShadow(
+                                  color: AppColors.verdictFalse
+                                      .withOpacity(0.5),
+                                  blurRadius: 20,
+                                  spreadRadius: 4,
+                                )
+                              ]
+                            : [],
+                      ),
+                      child: Icon(
+                        _isRecording
+                            ? Icons.stop
+                            : _hasRecording
+                                ? Icons.check
+                                : Icons.mic,
+                        color: Colors.white,
+                        size: 36,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _isRecording
+                        ? 'Recording... tap to stop  ${_formatDuration(_recordingDuration)}'
+                        : _hasRecording
+                            ? 'Ready — tap Verify'
+                            : 'Tap to start recording',
+                    style: const TextStyle(
+                        color: AppColors.onSurface, fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildPlatformShareRow(),
+          ],
+        );
+    }
+  }
+
+  Widget _buildPlatformShareRow() {
+    return Row(
+      children: [
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: _platform,
+            dropdownColor: AppColors.surface,
+            style: const TextStyle(
+                color: AppColors.onBackground, fontSize: 14),
+            decoration: const InputDecoration(
+              labelText: 'Platform',
+              contentPadding:
+                  EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+            items: AppConstants.platforms
+                .map((p) => DropdownMenuItem(
+                      value: p,
+                      child: Text(AppConstants.platformLabels[p] ?? p),
+                    ))
+                .toList(),
+            onChanged: (v) => setState(() => _platform = v ?? 'unknown'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 100,
+          child: TextFormField(
+            initialValue: '0',
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: AppColors.onBackground),
+            decoration: const InputDecoration(labelText: 'Shares'),
+            onChanged: (v) => _shares = int.tryParse(v) ?? 0,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRecentSection(BuildContext context) {
+    return Consumer<ClaimProvider>(
+      builder: (context, claimProvider, _) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Recent',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.onBackground,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const HistoryScreen()),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    padding: EdgeInsets.zero,
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('See all →',
+                      style: TextStyle(fontSize: 13)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (claimProvider.isLoadingHistory &&
+                claimProvider.history.isEmpty)
+              const Center(
+                  child: CircularProgressIndicator(
+                      color: AppColors.primary, strokeWidth: 2))
+            else if (claimProvider.history.isEmpty)
+              const Text(
+                'No verifications yet',
+                style:
+                    TextStyle(color: AppColors.onSurface, fontSize: 13),
+              )
+            else
+              SizedBox(
+                height: 130,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: claimProvider.history.take(3).length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(width: 12),
+                  itemBuilder: (context, index) {
+                    final claim = claimProvider.history[index];
+                    return _ClaimCard(
+                      claim: claim,
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                ResultScreen(claim: claim)),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ClaimCard extends StatelessWidget {
+  final ClaimModel claim;
+  final VoidCallback onTap;
+
+  const _ClaimCard({required this.claim, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 200,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: claim.verdictColor.withOpacity(0.3), width: 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            VerdictBadge(
+                verdict: claim.llmVerdict,
+                size: VerdictBadgeSize.small),
+            const SizedBox(height: 8),
+            Text(
+              claim.displayClaim,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 12, color: AppColors.onBackground),
+            ),
+            const Spacer(),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.riskColor(claim.riskLevel)
+                        .withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    claim.riskLevel,
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: AppColors.riskColor(claim.riskLevel),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  claim.timeAgo,
+                  style: const TextStyle(
+                      fontSize: 10, color: AppColors.onSurface),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

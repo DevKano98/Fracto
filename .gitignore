@@ -1,0 +1,16 @@
+**/.env
+backend/firebase_credentials.json
+backend/gmail_credentials.json
+backend/gmail_token.json
+android-app/google-services.json
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/venv/
+blockchain/artifacts/
+blockchain/cache/
+dashboard/dist/
+**/.dart_tool/
+**/build/
+backend/gmail_tokens/
+*.pickle
