@@ -7,11 +7,13 @@
 // Entry point: overlayMain() — registered in main.dart
 
 import 'package:flutter/material.dart';
+import 'dart:ui';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 // Top-level entry for the overlay isolate
 @pragma('vm:entry-point')
 void overlayMain() {
+  DartPluginRegistrant.ensureInitialized();
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const _OverlayBubbleApp());
 }

@@ -34,6 +34,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   ];
 
   void _goToLogin() {
+    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
     );

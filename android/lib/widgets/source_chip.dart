@@ -19,6 +19,11 @@ class SourceChip extends StatelessWidget {
       final uri = Uri.parse(url);
       String host = uri.host;
       if (host.startsWith('www.')) host = host.substring(4);
+      // Point 16: Handle Internationalized Domain Names (IDNs) if host is punycode xn--
+      if (host.contains('xn--')) {
+         // Minimal handling: show raw or attempt decode if library was available
+         return host; 
+      }
       return host.isNotEmpty ? host : url;
     } catch (_) {
       return url.length > 30 ? '${url.substring(0, 30)}...' : url;

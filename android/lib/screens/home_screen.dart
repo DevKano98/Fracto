@@ -48,13 +48,17 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _recordingPath;
   Duration _recordingDuration = Duration.zero;
   Timer? _recordingTimer;
+
+  bool _isNavigating = false;
   final AudioRecorder _recorder = AudioRecorder();
   bool _historyLoaded = false;
+  Uint8List? _previewBytes;
 
   // ── Background service + share wiring ─────────────────────────────
   final ShareHandlerService _shareHandler = ShareHandlerService();
   StreamSubscription? _verdictSub;
   StreamSubscription? _overlaySub;
+  StreamSubscription? _assistantSub;
   bool _serviceStarted = false;
 
   @override
@@ -101,8 +105,22 @@ class _HomeScreenState extends State<HomeScreen> {
       if (hasPerm) {
         await OverlayService.showBubble();
       } else {
-        // pro-actively request if it was enabled but permission lost
-        await OverlayService.requestPermission();
+        // Point 24: Explain why we need overlay permission
+        if (mounted) {
+          final grant = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: AppColors.surface,
+              title: const Text('Floating Bubble'),
+              content: const Text('Fracta uses a floating bubble to let you fact-check from any app. This requires the "Appear on top" permission.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Later')),
+                TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Enable')),
+              ],
+            ),
+          );
+          if (grant == true) await OverlayService.requestPermission();
+        }
       }
     }
   }
@@ -136,11 +154,14 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Wire background service verdict → navigate to result ──────────
   void _wireVerdictStream() {
     _verdictSub = FractaBackgroundService.verdictStream.listen((data) {
-      if (data != null && mounted) {
+      if (data != null && mounted && !_isNavigating) {
         final claim = ClaimModel.fromJson(data);
+        setState(() => _isNavigating = true);
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => ResultScreen(claim: claim)),
-        );
+        ).then((_) {
+          if (mounted) setState(() => _isNavigating = false);
+        });
       }
     });
   }
@@ -150,15 +171,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final assistant = context.read<VoiceAssistantService>();
     assistant.initialize().then((_) {
       assistant.startListening();
-    });
-
-    assistant.events.listen((state) {
-      if (state == VoiceAssistantState.woken ||
-          state == VoiceAssistantState.listening ||
-          state == VoiceAssistantState.processing ||
-          state == VoiceAssistantState.speaking) {
-        if (mounted) AssistantOverlayScreen.show(context);
-      }
+      _assistantSub = assistant.events.listen((state) {
+        if (!mounted) return;
+        // Point 2: Only trigger show() on woken state to prevent stacking
+        if (state == VoiceAssistantState.woken) {
+          AssistantOverlayScreen.show(context);
+        }
+      });
     });
   }
 
@@ -181,6 +200,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _shareHandler.dispose();
     _verdictSub?.cancel();
     _overlaySub?.cancel();
+    _assistantSub?.cancel();
     super.dispose();
   }
 
@@ -192,7 +212,13 @@ class _HomeScreenState extends State<HomeScreen> {
       imageQuality: 85,
       maxWidth: 1920,
     );
-    if (image != null) setState(() => _selectedImage = image);
+    if (image != null) {
+      final bytes = await image.readAsBytes();
+      setState(() {
+        _selectedImage = image;
+        _previewBytes = bytes;
+      });
+    }
   }
 
   void _showImagePickerSheet() {
@@ -245,8 +271,9 @@ class _HomeScreenState extends State<HomeScreen> {
         return;
       }
       final dir = await getTemporaryDirectory();
-      final path =
-          '${dir.path}/fracta_recording_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      // Point 19: Use fixed filename to avoid infinite temp file leak
+      final path = '${dir.path}/fracta_manual_recording.m4a';
+      
       await _recorder.start(
         const RecordConfig(
           encoder: AudioEncoder.aacLc,
@@ -329,22 +356,24 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => LoadingScreen(
-          inputType: _selectedType,
-          text: _textController.text.trim(),
-          imageBytes: imageBytes,
-          imageFilename: imageFilename,
-          url: _urlController.text.trim(),
-          audioBytes: audioBytes,
-          audioFilename: audioFilename,
-          platform: _platform,
-          shares: _shares,
-          accessToken: accessToken,
-        ),
+    setState(() => _isNavigating = true);
+    final route = MaterialPageRoute(
+      builder: (_) => LoadingScreen(
+        inputType: _selectedType,
+        text: _textController.text.trim(),
+        imageBytes: imageBytes,
+        imageFilename: imageFilename,
+        url: _urlController.text.trim(),
+        audioBytes: audioBytes,
+        audioFilename: audioFilename,
+        platform: _platform,
+        shares: _shares,
+        accessToken: accessToken,
       ),
     );
+    Navigator.of(context).push(route).then((_) {
+      if (mounted) setState(() => _isNavigating = false);
+    });
   }
 
   void _showError(String msg) {
@@ -381,27 +410,34 @@ class _HomeScreenState extends State<HomeScreen> {
               IconButton(
                 icon: const Icon(Icons.settings_outlined,
                     color: AppColors.onSurface),
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
-                ),
-                tooltip: 'Settings',
+                onPressed: () {
+                  if (!mounted) return;
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  );
+                },
               ),
               if (auth.isLoggedIn) ...[
                 IconButton(
                   icon: const Icon(Icons.history, color: AppColors.onSurface),
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                        builder: (_) => const HistoryScreen()),
-                  ),
-                  tooltip: 'History',
+                  onPressed: () {
+                    if (!mounted) return;
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const HistoryScreen()),
+                    );
+                  },
                 ),
                 Padding(
                   padding: const EdgeInsets.only(right: 12),
                   child: GestureDetector(
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                          builder: (_) => const HistoryScreen()),
-                    ),
+                    onTap: () {
+                      if (!mounted) return;
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const HistoryScreen()),
+                      );
+                    },
                     child: Stack(
                       alignment: Alignment.bottomRight,
                       children: [
@@ -432,9 +468,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ] else
                 TextButton(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  ),
+                  onPressed: () {
+                    if (!mounted) return;
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    );
+                  },
                   child: const Text('Login',
                       style: TextStyle(color: AppColors.primary)),
                 ),
@@ -555,18 +594,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            FutureBuilder<Uint8List>(
-                              future: _selectedImage!.readAsBytes(),
-                              builder: (_, snap) {
-                                if (snap.hasData) {
-                                  return Image.memory(snap.data!,
-                                      fit: BoxFit.cover);
-                                }
-                                return const Center(
-                                    child: CircularProgressIndicator(
-                                        color: AppColors.primary));
-                              },
-                            ),
+                            if (_previewBytes != null)
+                              Image.memory(_previewBytes!, fit: BoxFit.cover),
+                            if (_previewBytes == null)
+                              const Center(child: CircularProgressIndicator()),
                             Positioned(
                               bottom: 8,
                               right: 8,

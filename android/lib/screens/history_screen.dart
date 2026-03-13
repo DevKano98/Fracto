@@ -21,6 +21,7 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   final ScrollController _scrollController = ScrollController();
+  bool _isFetching = false;
 
   @override
   void initState() {
@@ -35,9 +36,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (!authProvider.isLoggedIn) return;
     final token = await authProvider.getAccessToken();
     if (token == null || token.isEmpty) return;
-    await context
-        .read<ClaimProvider>()
-        .loadHistory(token, refresh: refresh);
+    
+    if (_isFetching) return;
+    setState(() => _isFetching = true);
+    
+    try {
+      await context
+          .read<ClaimProvider>()
+          .loadHistory(token, refresh: refresh);
+    } finally {
+      if (mounted) setState(() => _isFetching = false);
+    }
   }
 
   void _onScroll() {
@@ -45,7 +54,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
         _scrollController.position.maxScrollExtent - 150) {
       final claimProvider = context.read<ClaimProvider>();
       if (!claimProvider.isLoadingHistory &&
-          claimProvider.hasMoreHistory) {
+          claimProvider.hasMoreHistory &&
+          !_isFetching) {
         _loadHistory();
       }
     }
@@ -243,9 +253,26 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   separatorBuilder: (_, __) =>
                       const SizedBox(height: 10),
                   itemBuilder: (context, index) {
+                    // Important: Management of index to avoid RangeError
+                    final historyLength = claimProvider.history.length;
+                    if (index < historyLength) {
+                      final claim = claimProvider.history[index];
+                      return _HistoryCard(
+                        claim: claim,
+                        sourceIcon: _sourceIcon(claim.sourceType),
+                        onTap: () {
+                          if (!mounted) return;
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ResultScreen(claim: claim),
+                            ),
+                          );
+                        },
+                      );
+                    }
+
                     // Loading indicator at bottom
-                    if (index == claimProvider.history.length &&
-                        claimProvider.isLoadingHistory) {
+                    if (claimProvider.isLoadingHistory) {
                       return const Center(
                         child: Padding(
                           padding: EdgeInsets.all(16),
@@ -254,9 +281,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         ),
                       );
                     }
-                    // Error banner
-                    if (claimProvider.error != null &&
-                        index == claimProvider.history.length) {
+
+                    // Error banner at bottom
+                    if (claimProvider.error != null) {
                       return Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -285,16 +312,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       );
                     }
 
-                    final claim = claimProvider.history[index];
-                    return _HistoryCard(
-                      claim: claim,
-                      sourceIcon: _sourceIcon(claim.sourceType),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => ResultScreen(claim: claim),
-                        ),
-                      ),
-                    );
+                    return const SizedBox.shrink();
                   },
                 ),
               );

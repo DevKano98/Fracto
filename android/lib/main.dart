@@ -21,12 +21,14 @@ import 'screens/overlay_bubble.dart';
 import 'services/background_service.dart';
 import 'services/voice_assistant_service.dart';
 import 'theme.dart';
+import 'dart:ui';
 
 // ── Overlay entry point ────────────────────────────────────────────────────
 // flutter_overlay_window calls this top-level function (in its own isolate)
 // to render the floating bubble. Must be annotated and top-level.
 @pragma('vm:entry-point')
 void overlayMain() {
+  DartPluginRegistrant.ensureInitialized();
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const _OverlayBubbleApp());
 }
@@ -83,12 +85,30 @@ class FractaApp extends StatelessWidget {
       theme: AppTheme.darkTheme,
       home: const SplashScreen(),
       debugShowCheckedModeBanner: false,
-      routes: {
-        '/home':     (_) => const HomeScreen(),
-        '/login':    (_) => const LoginScreen(),
-        '/register': (_) => const RegisterScreen(),
-        '/history':  (_) => const HistoryScreen(),
-        '/settings': (_) => const SettingsScreen(),
+      onGenerateRoute: (settings) {
+        // Point 9: Route guards
+        return MaterialPageRoute(
+          builder: (context) {
+            final auth = Provider.of<AuthProvider>(context, listen: false);
+            final bool isPublicRoute = 
+                settings.name == '/login' || 
+                settings.name == '/register' ||
+                settings.name == '/'; // SplashScreen is at home: property
+            
+            if (!auth.isLoggedIn && !isPublicRoute) {
+              return const LoginScreen();
+            }
+            
+            return switch (settings.name) {
+              '/home'     => const HomeScreen(),
+              '/login'    => const LoginScreen(),
+              '/register' => const RegisterScreen(),
+              '/history'  => const HistoryScreen(),
+              '/settings' => const SettingsScreen(),
+              _           => const SplashScreen(),
+            };
+          },
+        );
       },
     );
   }

@@ -232,7 +232,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 Center(
                   child: TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () {
+                      if (!mounted) return;
+                      Navigator.of(context).pop();
+                    },
                     child: const Text.rich(
                       TextSpan(
                         text: 'Already have an account? ',

@@ -117,7 +117,7 @@ class ClaimProvider extends ChangeNotifier {
       );
       _history.addAll(items.map(ClaimModel.fromJson));
       _historyOffset += items.length;
-      _hasMoreHistory = items.length == 20;
+      _hasMoreHistory = items.isNotEmpty && items.length >= 20;
     } on ApiException catch (e) {
       _error = e.message;
     } catch (e) {

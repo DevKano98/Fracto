@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/api_service.dart';
+import '../services/background_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService;
@@ -106,6 +107,9 @@ class AuthProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     try {
+      // Point 20: Stop background service on logout
+      await FractaBackgroundService.stop();
+
       final token = await _authService.getRefreshToken();
       if (token != null) {
         await _authService.logout(token);

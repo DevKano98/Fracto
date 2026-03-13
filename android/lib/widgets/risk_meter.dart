@@ -67,7 +67,7 @@ class _RiskMeterPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width / 2 - 16;
+    final radius = max(0.0, size.width / 2 - 16); // Point 13: Handle small sizes
     const strokeWidth = 12.0;
 
     // Background arc (gray)

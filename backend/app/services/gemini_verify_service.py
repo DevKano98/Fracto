@@ -172,7 +172,6 @@ async def verify_claim(
                 "corrective_response": "Verification failed due to technical issues",
             }
             break
-        }
 
     if rag_sources_for_response:
         existing = set(parsed["sources"])

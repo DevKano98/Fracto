@@ -271,7 +271,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     subtitle: 'Clears tokens from secure storage',
                     onTap: () async {
                       await auth.logout();
-                      if (context.mounted) Navigator.of(context).pop();
+                      if (context.mounted) {
+                        Navigator.of(context).pop();
+                      }
                     },
                   ),
                 ],

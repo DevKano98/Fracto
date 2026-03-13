@@ -26,28 +26,23 @@ class SarvamService {
       return 'hi-IN';
     }
 
-    // Check for common Hindi words romanized
-    const hindiWords = [
-      'hai',
-      'kya',
-      'nahi',
-      'ye',
-      'vo',
-      'aur',
-      'main',
-      'hum',
-      'tum',
-      'aap',
-      'iska',
-      'uska',
-    ];
+    // Check for common Romanized Hindi patterns
     final lowerText = text.toLowerCase();
-    for (final word in hindiWords) {
-      if (lowerText.contains(' $word ') ||
-          lowerText.startsWith('$word ') ||
-          lowerText.endsWith(' $word')) {
-        return 'hi-IN';
-      }
+    
+    // Pattern 1: Common Romanized Hindi words
+    final romanizedHindiRegex = RegExp(
+      r'\b(hai|kya|nahi|ye|vo|aur|main|hum|tum|aap|iska|uska|kar|raha|tho|kyun|kab|kaise)\b',
+      caseSensitive: false,
+    );
+    
+    if (romanizedHindiRegex.hasMatch(lowerText)) {
+      return 'hi-IN';
+    }
+
+    // Pattern 2: ROMANIZED HINDI heuristic (Check for missing common English patterns)
+    // If it has "hai" or "kya" at the end, it's very likely Hindi
+    if (lowerText.endsWith(' hai') || lowerText.endsWith(' kya') || lowerText.endsWith(' na')) {
+      return 'hi-IN';
     }
 
     return 'en-IN';
@@ -58,9 +53,17 @@ class SarvamService {
     try {
       final bytes = base64Decode(base64Audio);
       final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/response.wav');
+      // Point 9: Use unique filename to prevent collision
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${tempDir.path}/sarvam_response_$timestamp.wav');
       await file.writeAsBytes(bytes);
+      await _audioPlayer.setVolume(1.0); // Point 19: Set default volume
       await _audioPlayer.play(DeviceFileSource(file.path));
+      
+      // Cleanup after play (optional but good for long-term storage)
+      _audioPlayer.onPlayerComplete.first.then((_) {
+        if (file.existsSync()) file.deleteSync();
+      });
     } catch (e) {
       throw Exception('Failed to play audio: $e');
     }

@@ -75,13 +75,18 @@ class ClaimModel {
       llmVerdict: json['llm_verdict']?.toString() ?? 'UNVERIFIED',
       llmConfidence: (json['llm_confidence'] as num?)?.toDouble(),
       evidence: json['evidence']?.toString(),
-      sources: (json['sources'] as List?)?.cast<String>() ?? [],
+      sources: (json['sources'] as List?)?.map((e) => e.toString()).toList() ?? [],
       reasoningSteps:
-          (json['reasoning_steps'] as List?)?.cast<String>() ?? [],
+          (json['reasoning_steps'] as List?)?.map((e) => e.toString()).toList() ?? [],
       correctiveResponse: json['corrective_response']?.toString(),
-      riskScore: (json['risk_score'] as num?)?.toDouble() ?? 0.0,
+      riskScore: (() {
+        double score = (json['risk_score'] as num?)?.toDouble() ?? 0.0;
+        // Point 17: Scale up if LLM returned 0.0-1.0 fraction
+        if (score > 0 && score <= 1.0) return score * 10.0;
+        return score;
+      })(),
       riskLevel: json['risk_level']?.toString() ?? 'LOW',
-      visualFlags: (json['visual_flags'] as List?)?.cast<String>() ?? [],
+      visualFlags: (json['visual_flags'] as List?)?.map((e) => e.toString()).toList() ?? [],
       status: json['status']?.toString(),
       viralityScore: (json['virality_score'] as num?)?.toDouble(),
       viralityLevel: json['virality_level']?.toString(),

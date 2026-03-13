@@ -179,6 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
               Center(
                 child: TextButton(
                   onPressed: () {
+                    if (!mounted) return;
                     Navigator.of(context).push(
                       MaterialPageRoute(
                           builder: (_) => const RegisterScreen()),

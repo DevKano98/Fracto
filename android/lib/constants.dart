@@ -5,11 +5,10 @@ enum InputType { text, image, url, voice }
 enum VerdictBadgeSize { large, small }
 
 class AppConstants {
-  static const String baseUrl = "https://fracto-l151.onrender.com";
-  // Local emulator:
-  // static const String baseUrl = "http://10.0.2.2:8000";
-  // ngrok fallback:
-  // static const String baseUrl = "https://xxxx.ngrok-free.app";
+  static const bool isProd = true; // Toggle for environment
+  static const String baseUrl = isProd 
+      ? "https://fracto-l151.onrender.com" 
+      : "http://10.0.2.2:8000";
 
   static const Duration apiTimeout = Duration(seconds: 60);
   static const Duration verifyTimeout = Duration(seconds: 90);

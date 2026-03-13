@@ -47,7 +47,8 @@ class AppColors {
 
 class AppTheme {
   static ThemeData get darkTheme {
-    const colorScheme = ColorScheme(
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: AppColors.primary,
       brightness: Brightness.dark,
       primary: AppColors.primary,
       onPrimary: Colors.white,

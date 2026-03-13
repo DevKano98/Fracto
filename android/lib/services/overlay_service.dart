@@ -12,6 +12,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class OverlayService {
   static const _kBubbleEnabledKey = 'fracta_bubble_enabled';
+  
+  static SharedPreferences? _prefs;
+  static Future<SharedPreferences> get _getPrefs async => _prefs ??= await SharedPreferences.getInstance();
 
   /// Request draw-over-apps permission.
   static Future<bool> requestPermission() async {
@@ -63,12 +66,12 @@ class OverlayService {
   }
 
   static Future<void> _saveBubbleEnabled(bool enabled) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs;
     await prefs.setBool(_kBubbleEnabledKey, enabled);
   }
 
   static Future<bool> get wasBubbleEnabled async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _getPrefs;
     return prefs.getBool(_kBubbleEnabledKey) ?? false;
   }
 }
