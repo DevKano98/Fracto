@@ -16,6 +16,8 @@ from app.routes.blog_routes import router as blog_router
 from app.routes.feed_routes import router as feed_router
 from app.routes.verify_routes import router as verify_router
 from app.routes.trends_routes import router as trends_router
+from app.routes.auth_routes import router as auth_router
+from app.routes.admin_routes import router as admin_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,6 +49,8 @@ app.include_router(feed_router, prefix="/feed", tags=["Feed"])
 app.include_router(action_router, prefix="/action", tags=["Actions"])
 app.include_router(blog_router, prefix="/blog", tags=["Blog"])
 app.include_router(trends_router, prefix="/trends", tags=["Trends"])
+app.include_router(auth_router)
+app.include_router(admin_router)
 
 _service_status = {
     "supabase": False,
@@ -83,6 +87,7 @@ async def startup_event():
 
     try:
         supabase.table("claims").select("id").limit(1).execute()
+        supabase.table("users").select("id").limit(1).execute()
         _service_status["supabase"] = True
         logger.info("✅ Supabase connected")
     except Exception as exc:

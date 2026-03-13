@@ -69,11 +69,15 @@ async def auto_generate_blog(claim_data: dict) -> dict | None:
             "slug": slug,
             "summary": blog_content.get("summary", ""),
             "content": blog_content.get("content", ""),
-            "image_url": cloudinary_result.get("url", ""),
+            "cover_image": cloudinary_result.get("url", ""),
             "cloudinary_public_id": cloudinary_result.get("public_id", ""),
+            "verdict": verdict,
+            "risk_score": risk_score,
+            "sources": claim_data.get("sources", []),
             "tags": blog_content.get("tags", []),
             "category": claim_data.get("ml_category", "UNKNOWN"),
             "published": True,
+            "auto_generated": True,
         }
         inserted = insert_blog_post(blog_row)
         logger.info("Blog post created: slug=%s", slug)

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../constants.dart';
 import '../models/claim_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/claim_provider.dart';
@@ -41,8 +42,7 @@ class _ResultScreenState extends State<ResultScreen> {
     super.initState();
     _sarvamService.playerStateStream.listen((state) {
       if (mounted &&
-          (state == PlayerState.stopped ||
-              state == PlayerState.completed)) {
+          (state == PlayerState.stopped || state == PlayerState.completed)) {
         setState(() => _isPlayingAudio = false);
       }
     });
@@ -115,8 +115,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
   void _copyToClipboard() {
     if (widget.claim.correctiveResponse == null) return;
-    Clipboard.setData(
-        ClipboardData(text: widget.claim.correctiveResponse!));
+    Clipboard.setData(ClipboardData(text: widget.claim.correctiveResponse!));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Copied to clipboard!')),
     );
@@ -124,11 +123,9 @@ class _ResultScreenState extends State<ResultScreen> {
 
   void _shareText() {
     if (widget.claim.correctiveResponse == null) return;
-    Clipboard.setData(
-        ClipboardData(text: widget.claim.correctiveResponse!));
+    Clipboard.setData(ClipboardData(text: widget.claim.correctiveResponse!));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text('Text copied — paste anywhere to share!')),
+      const SnackBar(content: Text('Text copied — paste anywhere to share!')),
     );
   }
 
@@ -196,8 +193,8 @@ class _ResultScreenState extends State<ResultScreen> {
                     ),
                     const SizedBox(height: 16),
                     GestureDetector(
-                      onTap: () => setState(
-                          () => _claimExpanded = !_claimExpanded),
+                      onTap: () =>
+                          setState(() => _claimExpanded = !_claimExpanded),
                       child: Text(
                         claim.displayClaim,
                         maxLines: _claimExpanded ? null : 3,
@@ -215,8 +212,8 @@ class _ResultScreenState extends State<ResultScreen> {
                     if (claim.displayClaim.length > 100) ...[
                       const SizedBox(height: 4),
                       GestureDetector(
-                        onTap: () => setState(
-                            () => _claimExpanded = !_claimExpanded),
+                        onTap: () =>
+                            setState(() => _claimExpanded = !_claimExpanded),
                         child: Text(
                           _claimExpanded ? 'Show less' : 'Show more',
                           style: TextStyle(
@@ -266,8 +263,7 @@ class _ResultScreenState extends State<ResultScreen> {
               Center(
                 child: Column(
                   children: [
-                    RiskMeter(
-                        score: claim.riskScore, level: claim.riskLevel),
+                    RiskMeter(score: claim.riskScore, level: claim.riskLevel),
                     const SizedBox(height: 8),
                     Text(
                       '${claim.riskLevel} RISK',
@@ -325,10 +321,8 @@ class _ResultScreenState extends State<ResultScreen> {
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     itemCount: claim.sources.length,
-                    separatorBuilder: (_, __) =>
-                        const SizedBox(width: 8),
-                    itemBuilder: (_, i) =>
-                        SourceChip(url: claim.sources[i]),
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (_, i) => SourceChip(url: claim.sources[i]),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -343,8 +337,7 @@ class _ResultScreenState extends State<ResultScreen> {
                 const SizedBox(height: 4),
                 const Text(
                   'Share this to counter the misinformation',
-                  style: TextStyle(
-                      color: AppColors.onSurface, fontSize: 12),
+                  style: TextStyle(color: AppColors.onSurface, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
                 Container(
@@ -352,8 +345,8 @@ class _ResultScreenState extends State<ResultScreen> {
                   decoration: BoxDecoration(
                     color: AppColors.surface,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                        color: AppColors.surfaceVariant, width: 1),
+                    border:
+                        Border.all(color: AppColors.surfaceVariant, width: 1),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -378,8 +371,7 @@ class _ResultScreenState extends State<ResultScreen> {
                                   width: 16,
                                   height: 16,
                                   child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white),
+                                      strokeWidth: 2, color: Colors.white),
                                 )
                               : Icon(_isPlayingAudio
                                   ? Icons.stop
@@ -390,8 +382,7 @@ class _ResultScreenState extends State<ResultScreen> {
                                   ? 'Stop Audio'
                                   : '🔊 Hear in Hindi'),
                           style: ElevatedButton.styleFrom(
-                            minimumSize:
-                                const Size(double.infinity, 44),
+                            minimumSize: const Size(double.infinity, 44),
                           ),
                         ),
                         const SizedBox(height: 10),
@@ -407,8 +398,8 @@ class _ResultScreenState extends State<ResultScreen> {
                               label: const Text('Copy'),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.primary,
-                                side: const BorderSide(
-                                    color: AppColors.primary),
+                                side:
+                                    const BorderSide(color: AppColors.primary),
                                 minimumSize: const Size(0, 42),
                               ),
                             ),
@@ -417,14 +408,12 @@ class _ResultScreenState extends State<ResultScreen> {
                           Expanded(
                             child: OutlinedButton.icon(
                               onPressed: _shareText,
-                              icon: const Icon(
-                                  Icons.share_outlined,
-                                  size: 15),
+                              icon: const Icon(Icons.share_outlined, size: 15),
                               label: const Text('Share'),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.primary,
-                                side: const BorderSide(
-                                    color: AppColors.primary),
+                                side:
+                                    const BorderSide(color: AppColors.primary),
                                 minimumSize: const Size(0, 42),
                               ),
                             ),
@@ -456,8 +445,7 @@ class _ResultScreenState extends State<ResultScreen> {
                     children: claim.visualFlags
                         .map(
                           (f) => Padding(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 5),
+                            padding: const EdgeInsets.symmetric(vertical: 5),
                             child: Row(
                               children: [
                                 const Icon(
@@ -495,22 +483,19 @@ class _ResultScreenState extends State<ResultScreen> {
                         GestureDetector(
                           onTap: () {
                             if (!auth.isLoggedIn) {
-                              ScaffoldMessenger.of(context)
-                                  .showSnackBar(
+                              ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text(
-                                      'Please login to report a claim'),
+                                  content:
+                                      Text('Please login to report a claim'),
                                 ),
                               );
                               Navigator.of(context).push(
                                 MaterialPageRoute(
-                                    builder: (_) =>
-                                        const LoginScreen()),
+                                    builder: (_) => const LoginScreen()),
                               );
                               return;
                             }
-                            setState(() =>
-                                _reportExpanded = !_reportExpanded);
+                            setState(() => _reportExpanded = !_reportExpanded);
                           },
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -538,12 +523,11 @@ class _ResultScreenState extends State<ResultScreen> {
                             decoration: BoxDecoration(
                               color: AppColors.surface,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                  color: AppColors.surfaceVariant),
+                              border:
+                                  Border.all(color: AppColors.surfaceVariant),
                             ),
                             child: Column(
-                              crossAxisAlignment:
-                                  CrossAxisAlignment.start,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const Text(
                                   'What is wrong with this result?',
@@ -582,8 +566,7 @@ class _ResultScreenState extends State<ResultScreen> {
                                       color: AppColors.onBackground),
                                   maxLines: 2,
                                   decoration: const InputDecoration(
-                                    hintText:
-                                        'Additional notes (optional)',
+                                    hintText: 'Additional notes (optional)',
                                   ),
                                 ),
                                 const SizedBox(height: 14),
@@ -592,15 +575,14 @@ class _ResultScreenState extends State<ResultScreen> {
                                       ? null
                                       : _submitReport,
                                   style: ElevatedButton.styleFrom(
-                                    minimumSize: const Size(
-                                        double.infinity, 44),
+                                    minimumSize:
+                                        const Size(double.infinity, 44),
                                   ),
                                   child: _isSubmittingReport
                                       ? const SizedBox(
                                           width: 18,
                                           height: 18,
-                                          child:
-                                              CircularProgressIndicator(
+                                          child: CircularProgressIndicator(
                                             strokeWidth: 2,
                                             color: Colors.white,
                                           ),
@@ -617,8 +599,8 @@ class _ResultScreenState extends State<ResultScreen> {
                 ),
               if (_reportSubmitted) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
                     color: AppColors.verdictTrue.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(10),
@@ -657,8 +639,7 @@ class _ResultScreenState extends State<ResultScreen> {
                     onPressed: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text(
-                              'Saved to history automatically!'),
+                          content: Text('Saved to history automatically!'),
                         ),
                       );
                     },
@@ -666,10 +647,8 @@ class _ResultScreenState extends State<ResultScreen> {
                     label: const Text('Save to History'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.onSurface,
-                      side: const BorderSide(
-                          color: AppColors.surfaceVariant),
-                      minimumSize:
-                          const Size(double.infinity, 52),
+                      side: const BorderSide(color: AppColors.surfaceVariant),
+                      minimumSize: const Size(double.infinity, 52),
                     ),
                   );
                 },
@@ -746,8 +725,7 @@ class _SmallChip extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             label,
-            style: const TextStyle(
-                fontSize: 10, color: AppColors.onSurface),
+            style: const TextStyle(fontSize: 10, color: AppColors.onSurface),
           ),
         ],
       ),
@@ -776,8 +754,7 @@ class _ReportRadio extends StatelessWidget {
       onChanged: onChanged,
       title: Text(
         label,
-        style: const TextStyle(
-            color: AppColors.onBackground, fontSize: 13),
+        style: const TextStyle(color: AppColors.onBackground, fontSize: 13),
       ),
       contentPadding: EdgeInsets.zero,
       dense: true,

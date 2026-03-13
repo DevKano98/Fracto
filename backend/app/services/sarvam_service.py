@@ -15,9 +15,9 @@ VOICE_MAP = {
 }
 
 
-def speech_to_text(audio_bytes: bytes, language: str = "hi-IN") -> str:
+def speech_to_text(audio_bytes: bytes, language: str = "hi-IN", filename: str = "audio.wav", content_type: str = "audio/wav") -> str:
     try:
-        files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
+        files = {"file": (filename, audio_bytes, content_type)}
         data = {"language_code": language, "model": "saarika:v2"}
         response = requests.post(
             "https://api.sarvam.ai/speech-to-text",

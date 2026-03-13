@@ -346,7 +346,7 @@ async def verify_voice(
     current_user: Optional[dict] = Depends(get_optional_user)
 ):
     audio_bytes = await file.read()
-    transcript = speech_to_text(audio_bytes, language) or "Could not transcribe audio"
+    transcript = speech_to_text(audio_bytes, language, filename=file.filename, content_type=file.content_type) or "Could not transcribe audio"
     detected_lang = detect_language(transcript) if transcript else language
 
     result = await _run_full_pipeline(

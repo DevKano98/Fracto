@@ -1,7 +1,7 @@
 // ========== FILE: lib/services/api_service.dart ==========
 
 import 'dart:convert';
-import 'dart:typed_data';
+
 import 'package:http/http.dart' as http;
 import '../constants.dart';
 
@@ -62,7 +62,7 @@ class ApiService {
             Uri.parse('${AppConstants.baseUrl}/verify/text'),
             headers: _authHeaders(accessToken),
             body: jsonEncode({
-              'claim_text': text,
+              'raw_text': text,
               'platform': platform,
               'shares': shares,
             }),
@@ -221,7 +221,7 @@ class ApiService {
             body: jsonEncode({
               'claim_id': claimId,
               'report_type': reportType,
-              'user_note': note ?? '',
+              'note': note ?? '',
             }),
           )
           .timeout(AppConstants.apiTimeout);

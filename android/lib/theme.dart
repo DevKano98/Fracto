@@ -77,7 +77,7 @@ class AppTheme {
           fontFamily: 'Roboto',
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: AppColors.surface,
         elevation: 0,
         shape: RoundedRectangleBorder(
