@@ -12,6 +12,7 @@ class Settings:
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
     SUPABASE_STORAGE_BUCKET: str = os.getenv("SUPABASE_STORAGE_BUCKET", "fracta-media")
+    APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY", "")
     CLOUDINARY_CLOUD_NAME: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
     CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "")
     CLOUDINARY_API_SECRET: str = os.getenv("CLOUDINARY_API_SECRET", "")
@@ -72,7 +73,7 @@ class Settings:
     def __init__(self):
         required = [
             "GEMINI_KEY_1", "GEMINI_KEY_2", "SARVAM_API_KEY",
-            "SUPABASE_URL", "SUPABASE_ANON_KEY",
+            "SUPABASE_URL", "SUPABASE_ANON_KEY", "APP_SECRET_KEY",
             "CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET",
             "REPLICATE_API_TOKEN", "UPSTASH_REDIS_URL", "UPSTASH_REDIS_TOKEN",
             "GROQ_API_KEY"

@@ -7,7 +7,7 @@ import hashlib, secrets, os
 from app.config import settings
 from app.database.supabase_client import supabase
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 ACCESS_TOKEN_EXPIRE_MINUTES  = 30
 REFRESH_TOKEN_EXPIRE_DAYS    = 7
