@@ -235,32 +235,41 @@ class _ResultScreenState extends State<ResultScreen> {
                       ),
                     ),
                     const SizedBox(height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        RiskMeter(score: claim.riskScore, level: claim.riskLevel),
-                        if (claim.llmConfidence != null) ...[
-                          const SizedBox(width: 24),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final narrow = constraints.maxWidth < 340;
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            RiskMeter(
+                              score: claim.riskScore,
+                              level: claim.riskLevel,
+                              size: narrow ? 120 : 160,
                             ),
-                            decoration: BoxDecoration(
-                              color: AppColors.surfaceVariant,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              'Confidence ${(claim.llmConfidence! * 100).round()}%',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: AppColors.onBackground,
+                            if (claim.llmConfidence != null) ...[
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceVariant,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  'Confidence ${(claim.llmConfidence! * 100).round()}%',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.onBackground,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        ],
-                      ],
+                            ],
+                          ],
+                        );
+                      },
                     ),
                     const SizedBox(height: 20),
                     GestureDetector(

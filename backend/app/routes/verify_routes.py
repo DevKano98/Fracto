@@ -430,7 +430,41 @@ async def verify_image(
         except Exception:
             pass
 
-    image_result = await process_image(image_bytes)
+    try:
+        image_result = await process_image(image_bytes)
+    except Exception as img_e:
+        logger.exception("Image processing failed: %s", img_e)
+        from datetime import datetime, timezone
+        return ClaimResponse(
+            raw_text="",
+            extracted_claim="Image analysis failed",
+            source_type="image",
+            platform=platform,
+            language="en-IN",
+            ml_category="UNKNOWN",
+            ml_confidence=0.5,
+            llm_verdict="UNVERIFIED",
+            llm_confidence=0.0,
+            evidence="Image verification failed. Please try again or use text/URL.",
+            sources=[],
+            reasoning_steps=["Image processing error. You can retry or verify as text."],
+            corrective_response="We couldn't analyze this image. Try uploading again or paste the text for verification.",
+            risk_score=5.0,
+            risk_level="MEDIUM",
+            visual_flags=[],
+            status="PENDING",
+            id=None,
+            created_at=datetime.now(timezone.utc),
+            conflict_flag=False,
+            govt_source_corroborated=False,
+            virality_score=0.0,
+            virality_level="low",
+            estimated_reach="0",
+            social_threat_score=0.0,
+            social_recommended_action="retry",
+            rag_sources_count=0,
+            is_duplicate=False,
+        )
 
     extracted_text = image_result.get("extracted_text", "") or image_result.get("image_summary", "No text extracted")
     detected_platform = image_result.get("platform", platform)
@@ -458,6 +492,39 @@ async def verify_image(
     except asyncio.TimeoutError:
         logger.warning("Image verification pipeline timed out")
         raise HTTPException(status_code=504, detail="Verification took too long. Please try again.")
+    except Exception as pipe_e:
+        logger.exception("Image verification pipeline failed: %s", pipe_e)
+        from datetime import datetime, timezone
+        return ClaimResponse(
+            raw_text=extracted_text[:500],
+            extracted_claim=extracted_text[:300] or "Image content",
+            source_type="image",
+            platform=detected_platform,
+            language=language,
+            ml_category="UNKNOWN",
+            ml_confidence=0.5,
+            llm_verdict="UNVERIFIED",
+            llm_confidence=0.0,
+            evidence="Verification step failed. Please try again.",
+            sources=[],
+            reasoning_steps=["A temporary error occurred during verification."],
+            corrective_response="We couldn't complete verification for this image. Please try again.",
+            risk_score=5.0,
+            risk_level="MEDIUM",
+            visual_flags=[],
+            status="PENDING",
+            id=None,
+            created_at=datetime.now(timezone.utc),
+            conflict_flag=False,
+            govt_source_corroborated=False,
+            virality_score=0.0,
+            virality_level="low",
+            estimated_reach="0",
+            social_threat_score=0.0,
+            social_recommended_action="retry",
+            rag_sources_count=0,
+            is_duplicate=False,
+        )
 
     from app.services.blog_generator import auto_generate_blog
 

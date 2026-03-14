@@ -3,6 +3,7 @@
 // Manages the Fracta floating bubble overlay.
 // Handles permissions, lifecycle, messaging, and persistence.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,13 +22,11 @@ class OverlayService {
   static Future<bool> requestPermission() async {
     try {
       final granted = await FlutterOverlayWindow.isPermissionGranted();
-
       if (granted) return true;
-
       await FlutterOverlayWindow.requestPermission();
-
       return await FlutterOverlayWindow.isPermissionGranted();
-    } catch (_) {
+    } catch (e) {
+      if (kDebugMode) debugPrint('OverlayService.requestPermission: $e');
       return false;
     }
   }
@@ -52,19 +51,20 @@ class OverlayService {
     }
   }
 
-  /// ─────────────────────────────────────────────
-  /// Show Floating Bubble
-  /// ─────────────────────────────────────────────
-
-  static Future<bool> showBubble() async {
+  /// Show overlay only (caller must ensure permission is already granted).
+  /// Returns true if overlay is now visible.
+  static Future<bool> showBubble({bool skipPermissionCheck = false}) async {
     try {
-      final permission = await requestPermission();
-
-      if (!permission) return false;
+      if (!skipPermissionCheck) {
+        final permission = await requestPermission();
+        if (!permission) return false;
+      }
 
       final alreadyActive = await FlutterOverlayWindow.isActive();
-
-      if (alreadyActive) return true;
+      if (alreadyActive) {
+        await _setBubbleEnabled(true);
+        return true;
+      }
 
       await FlutterOverlayWindow.showOverlay(
         height: 70,
@@ -78,9 +78,12 @@ class OverlayService {
       );
 
       await _setBubbleEnabled(true);
-
       return true;
-    } catch (_) {
+    } catch (e, stack) {
+      if (kDebugMode) {
+        debugPrint('OverlayService.showBubble error: $e');
+        debugPrint(stack.toString());
+      }
       return false;
     }
   }

@@ -119,6 +119,44 @@ def search_news(query: str):
 
 
 # ----------------------------------------------------
+# Mediastack News API
+# ----------------------------------------------------
+def search_mediastack(query: str):
+    """Mediastack live news — free tier, India + global."""
+    if not settings.MEDIASTACK_API_KEY:
+        return []
+    results = []
+    try:
+        resp = requests.get(
+            "https://api.mediastack.com/v1/news",
+            params={
+                "access_key": settings.MEDIASTACK_API_KEY,
+                "keywords": query,
+                "countries": "in",
+                "languages": "en",
+                "limit": MAX_RESULTS,
+            },
+            headers={"Accept": "application/json"},
+            timeout=HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if "error" in data:
+            return []
+        for a in data.get("data", []):
+            results.append({
+                "source": "mediastack",
+                "title": a.get("title", ""),
+                "snippet": a.get("description", ""),
+                "url": a.get("url", ""),
+                "credibility": 0.82,
+            })
+    except Exception as e:
+        logger.warning("Mediastack failed: %s", e)
+    return results[:MAX_RESULTS]
+
+
+# ----------------------------------------------------
 # Government Sites (Search via Google CSE)
 # ----------------------------------------------------
 def search_government_sources(query: str) -> List[Dict]:
@@ -242,16 +280,17 @@ async def gather_evidence(claim: str, language: str = "en") -> dict:
     loop = asyncio.get_running_loop()
     
     # Gather all sources concurrently
-    ddg, news, govt, reddit, youtube, telegram = await asyncio.gather(
+    ddg, news, mediastack, govt, reddit, youtube, telegram = await asyncio.gather(
         loop.run_in_executor(None, search_duckduckgo, claim),
         loop.run_in_executor(None, search_news, claim),
+        loop.run_in_executor(None, search_mediastack, claim),
         loop.run_in_executor(None, search_government_sources, claim),
         search_reddit_async(claim),
         search_youtube(claim),
         search_telegram(claim)
     )
 
-    batches = [ddg, news, govt, reddit, youtube, telegram]
+    batches = [ddg, news, mediastack, govt, reddit, youtube, telegram]
     
     merged = []
     seen = set()

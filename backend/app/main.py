@@ -66,6 +66,7 @@ _service_status = {
     "youtube": False,
     "telegram": False,
     "newsapi": False,
+    "mediastack": False,
     "google_cse": False,
 }
 
@@ -105,6 +106,7 @@ async def startup_event():
     _service_status["replicate"] = bool(settings.REPLICATE_API_TOKEN)
     _service_status["upstash_redis"] = bool(settings.UPSTASH_REDIS_URL and settings.UPSTASH_REDIS_TOKEN)
     _service_status["newsapi"] = bool(settings.NEWS_API_KEY)
+    _service_status["mediastack"] = bool(getattr(settings, "MEDIASTACK_API_KEY", ""))
     _service_status["youtube"] = bool(getattr(settings, "YOUTUBE_API_KEY", ""))
     _service_status["reddit"] = bool(getattr(settings, "REDDIT_CLIENT_ID", "") and getattr(settings, "REDDIT_CLIENT_SECRET", ""))
     _service_status["telegram"] = bool(getattr(settings, "TELEGRAM_API_ID", "") and getattr(settings, "TELEGRAM_API_HASH", ""))

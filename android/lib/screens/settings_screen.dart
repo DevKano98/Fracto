@@ -38,10 +38,12 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _loadStatus();
-      FloatingBubbleService.tryShowBubbleAfterResume(
-        startBackgroundService: FractaBackgroundService.start,
-      ).then((shown) {
+      Future<void>.delayed(const Duration(milliseconds: 300), () async {
+        if (!mounted) return;
+        await _loadStatus();
+        final shown = await FloatingBubbleService.tryShowBubbleAfterResume(
+          startBackgroundService: FractaBackgroundService.start,
+        );
         if (shown && mounted) setState(() => _bubbleEnabled = true);
       });
     }

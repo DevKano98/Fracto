@@ -256,6 +256,21 @@ Analyze and return structured result.
     if parsed is None:
         parsed = _fallback_verification(groq_fallback)
 
+    if parsed.get("verdict") == "UNVERIFIED" and rag_evidence:
+        try:
+            from app.services.openrouter_service import reasoning_verification, is_available
+            if is_available():
+                evidence_summary = _truncate_evidence(rag_evidence.get("evidence_summary", ""))
+                if evidence_summary:
+                    openrouter_result = await reasoning_verification(
+                        claim_text, evidence_summary, language
+                    )
+                    if openrouter_result and openrouter_result.get("verdict") != "UNVERIFIED":
+                        parsed = openrouter_result
+                        logger.info("Used OpenRouter Qwen3 fallback for verification")
+        except Exception as e:
+            logger.debug("OpenRouter reasoning fallback failed: %s", e)
+
     ml_conf = ml_result.get("confidence", 0.5)
 
     parsed["conflict_flag"] = abs(parsed["confidence"] - ml_conf) > 0.20

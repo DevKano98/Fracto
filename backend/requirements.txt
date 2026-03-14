@@ -1,15 +1,4 @@
-fastapi==0.115.12
-uvicorn[standard]==0.29.0
-python-multipart==0.0.20
-python-dotenv==1.0.1
-supabase==2.28.0
-google-generativeai==0.8.5
-requests==2.32.3
-beautifulsoup4==4.12.3
-scikit-learn==1.6.1
-pandas==2.2.3
-numpy==2.2.3
-cloudinary==1.40.0
+# Core
 fastapi==0.115.12
 uvicorn[standard]==0.29.0
 python-multipart==0.0.20
@@ -23,7 +12,9 @@ pandas==2.2.3
 numpy==2.2.3
 cloudinary==1.40.0
 replicate==0.34.1
+# OpenRouter (fallback vision/reasoning): async HTTP
 httpx==0.28.1
+# Mediastack/NewsAPI: uses requests above; no extra package
 slowapi==0.1.9
 pytest==8.3.5
 pytest-asyncio==0.25.3

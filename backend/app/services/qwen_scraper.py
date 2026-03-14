@@ -249,6 +249,52 @@ def _scrape_newsapi_free(query: str) -> list[dict]:
         return []
 
 
+def _scrape_mediastack(query: str) -> list[dict]:
+    """Mediastack live news API — free tier, India + global sources."""
+    if not settings.MEDIASTACK_API_KEY:
+        return []
+    try:
+        resp = requests.get(
+            "https://api.mediastack.com/v1/news",
+            params={
+                "access_key": settings.MEDIASTACK_API_KEY,
+                "keywords": query,
+                "countries": "in",
+                "languages": "en",
+                "limit": MAX_RESULTS_PER_SOURCE,
+            },
+            headers={"Accept": "application/json"},
+            timeout=HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if "error" in data:
+            logger.debug("Mediastack API error: %s", data.get("error", {}))
+            return []
+        articles = data.get("data", [])
+        TRUSTED_INDIA = {
+            "BBC", "Reuters", "The Hindu", "NDTV", "Indian Express",
+            "PTI", "ANI", "The Wire", "Scroll", "Mint", "Business Standard",
+        }
+        results = []
+        for a in articles:
+            src = (a.get("source") or "").strip()
+            cred = 0.88 if src in TRUSTED_INDIA else 0.72
+            results.append({
+                "source": "mediastack",
+                "title": a.get("title", ""),
+                "snippet": (a.get("description") or "")[:MAX_TEXT_PER_PAGE],
+                "url": a.get("url", ""),
+                "published_at": a.get("published_at", ""),
+                "news_source": src,
+                "credibility_score": cred,
+            })
+        return results
+    except Exception as exc:
+        logger.debug("Mediastack failed: %s", exc)
+        return []
+
+
 def _scrape_reddit_free(query: str) -> list[dict]:
     """Reddit public JSON — no auth, no key, 60 req/min."""
     try:
@@ -572,6 +618,7 @@ async def gather_evidence_free(claim_text: str, language: str = "en-IN") -> dict
         loop.run_in_executor(None, _scrape_searxng, claim_text),
         loop.run_in_executor(None, _scrape_wikipedia, claim_text),
         loop.run_in_executor(None, _scrape_newsapi_free, claim_text),
+        loop.run_in_executor(None, _scrape_mediastack, claim_text),
         loop.run_in_executor(None, _scrape_reddit_free, claim_text),
         loop.run_in_executor(None, _scrape_india_factcheckers, claim_text),
         loop.run_in_executor(None, _scrape_govt_pib, claim_text),
@@ -601,7 +648,7 @@ async def gather_evidence_free(claim_text: str, language: str = "en-IN") -> dict
 
     has_govt = any(item["source"].startswith("govt:") for item in all_evidence)
     has_factchecker = any(item["source"].startswith("factchecker:") for item in all_evidence)
-    has_news = any(item["source"] in ("newsapi", "google_cse") for item in all_evidence)
+    has_news = any(item["source"] in ("newsapi", "google_cse", "mediastack") for item in all_evidence)
 
     # Step 2: Deep-read top pages for full article text
     deep_context = await _deep_read_top_results(all_evidence, max_pages=4)

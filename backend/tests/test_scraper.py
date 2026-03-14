@@ -15,6 +15,7 @@ from app.services.qwen_scraper import (
     _scrape_searxng,
     _scrape_wikipedia,
     _scrape_newsapi_free,
+    _scrape_mediastack,
     _scrape_reddit_free,
     _scrape_india_factcheckers,
     _scrape_govt_pib,
@@ -93,7 +94,8 @@ if __name__ == "__main__":
     test_source("DuckDuckGo",         _scrape_duckduckgo,         needs_key=False)
     test_source("Wikipedia",          _scrape_wikipedia,          needs_key=False)
     test_source("NewsAPI",            _scrape_newsapi_free,       needs_key=True,  key_name="NEWS_API_KEY")
-    test_source("Reddit",             _scrape_reddit_free,        needs_key=False)
+    test_source("Mediastack",        _scrape_mediastack,         needs_key=True,  key_name="MEDIASTACK_API_KEY")
+    test_source("Reddit",            _scrape_reddit_free,        needs_key=False)
     test_source("India Factcheckers", _scrape_india_factcheckers, needs_key=False)
     test_source("PIB FactCheck",      _scrape_govt_pib,           needs_key=False)
     test_source("Telegram",           _scrape_telegram_public,    needs_key=False)

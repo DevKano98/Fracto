@@ -17,6 +17,7 @@ class Settings:
     CLOUDINARY_API_KEY: str = os.getenv("CLOUDINARY_API_KEY", "")
     CLOUDINARY_API_SECRET: str = os.getenv("CLOUDINARY_API_SECRET", "")
     NEWS_API_KEY: str = os.getenv("NEWS_API_KEY", "")
+    MEDIASTACK_API_KEY: str = os.getenv("MEDIASTACK_API_KEY", "")
     REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
     UPSTASH_REDIS_URL: str = os.getenv("UPSTASH_REDIS_URL", "")
     UPSTASH_REDIS_TOKEN: str = os.getenv("UPSTASH_REDIS_TOKEN", "")
@@ -70,6 +71,12 @@ class Settings:
     PERPLEXITY_API_KEY: str = os.getenv("PERPLEXITY_API_KEY", "")
     YOUTUBE_API_KEY: str = os.getenv("YOUTUBE_API_KEY", "")
 
+    # ── OpenRouter (free-tier fallback for image + reasoning) ──────────────
+    # Sign up: openrouter.ai  |  Free models: Gemma 3 4B (vision), Qwen3 Next 80B (reasoning)
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_VISION_MODEL: str = os.getenv("OPENROUTER_VISION_MODEL", "google/gemma-3-4b-it:free")
+    OPENROUTER_REASONING_MODEL: str = os.getenv("OPENROUTER_REASONING_MODEL", "qwen/qwen3-next-80b-a3b-instruct:free")
+
     def __init__(self):
         # Only block startup if absolutely critical vars missing
         required = [
@@ -84,7 +91,7 @@ class Settings:
         # Optional services — log warnings, do not crash
         optional_missing = []
         for k in ["SARVAM_API_KEY", "CLOUDINARY_CLOUD_NAME", "REPLICATE_API_TOKEN",
-                  "UPSTASH_REDIS_URL", "UPSTASH_REDIS_TOKEN", "GROQ_API_KEY"]:
+                  "UPSTASH_REDIS_URL", "UPSTASH_REDIS_TOKEN", "GROQ_API_KEY", "OPENROUTER_API_KEY"]:
             if not getattr(self, k):
                 optional_missing.append(k)
         if optional_missing:

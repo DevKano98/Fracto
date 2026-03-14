@@ -19,6 +19,7 @@ import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/overlay_bubble.dart';
 import 'services/background_service.dart';
+import 'services/floating_bubble_service.dart';
 import 'services/voice_assistant_service.dart';
 import 'theme.dart';
 import 'dart:ui';
@@ -69,10 +70,49 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
-        ChangeNotifierProvider(create: (_) => ClaimProvider()),        ChangeNotifierProvider(create: (_) => VoiceAssistantService()),      ],
+        ChangeNotifierProvider(create: (_) => ClaimProvider()),
+        ChangeNotifierProvider(create: (_) => VoiceAssistantService()),
+      ],
       child: const FractaApp(),
     ),
   );
+}
+
+/// Listens for app resume to show floating bubble after user grants overlay permission.
+class _FractaAppWithOverlayResume extends StatefulWidget {
+  final Widget child;
+
+  const _FractaAppWithOverlayResume({required this.child});
+
+  @override
+  State<_FractaAppWithOverlayResume> createState() => _FractaAppWithOverlayResumeState();
+}
+
+class _FractaAppWithOverlayResumeState extends State<_FractaAppWithOverlayResume>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      FloatingBubbleService.tryShowBubbleAfterResume(
+        startBackgroundService: FractaBackgroundService.start,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class FractaApp extends StatelessWidget {
@@ -80,36 +120,35 @@ class FractaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Fracta',
-      theme: AppTheme.lightTheme,
-      home: const SplashScreen(),
-      debugShowCheckedModeBanner: false,
-      onGenerateRoute: (settings) {
-        // Point 9: Route guards
-        return MaterialPageRoute(
-          builder: (context) {
-            final auth = Provider.of<AuthProvider>(context, listen: false);
-            final bool isPublicRoute = 
-                settings.name == '/login' || 
-                settings.name == '/register' ||
-                settings.name == '/'; // SplashScreen is at home: property
-            
-            if (!auth.isLoggedIn && !isPublicRoute) {
-              return const LoginScreen();
-            }
-            
-            return switch (settings.name) {
-              '/home'     => const HomeScreen(),
-              '/login'    => const LoginScreen(),
+    return _FractaAppWithOverlayResume(
+      child: MaterialApp(
+        title: 'Fracta',
+        theme: AppTheme.lightTheme,
+        home: const SplashScreen(),
+        debugShowCheckedModeBanner: false,
+        onGenerateRoute: (settings) {
+          return MaterialPageRoute(
+            builder: (context) {
+              final auth = Provider.of<AuthProvider>(context, listen: false);
+              final bool isPublicRoute =
+                  settings.name == '/login' ||
+                  settings.name == '/register' ||
+                  settings.name == '/';
+              if (!auth.isLoggedIn && !isPublicRoute) {
+                return const LoginScreen();
+              }
+              return switch (settings.name) {
+              '/home' => const HomeScreen(),
+              '/login' => const LoginScreen(),
               '/register' => const RegisterScreen(),
-              '/history'  => const HistoryScreen(),
+              '/history' => const HistoryScreen(),
               '/settings' => const SettingsScreen(),
-              _           => const SplashScreen(),
-            };
-          },
-        );
-      },
+                _ => const SplashScreen(),
+              };
+            },
+          );
+        },
+      ),
     );
   }
 }

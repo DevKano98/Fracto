@@ -5,10 +5,11 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/voice_assistant_service.dart';
+import '../constants.dart';
 import '../models/claim_model.dart';
-import '../widgets/verdict_badge.dart';
+import '../services/voice_assistant_service.dart';
 import '../theme.dart';
+import '../widgets/verdict_badge.dart';
 import 'result_screen.dart';
 
 class AssistantOverlayScreen extends StatefulWidget {
