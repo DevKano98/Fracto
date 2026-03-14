@@ -10,6 +10,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -29,11 +30,14 @@ class QuickCaptureScreen extends StatefulWidget {
   /// Pre-filled text from a share intent. Null if opened from bubble tap.
   final String? sharedText;
   final String? sharedUrl;
+  /// Screen capture when bubble is on — verify what the user was looking at.
+  final Uint8List? sharedImageBytes;
 
   const QuickCaptureScreen({
     super.key,
     this.sharedText,
     this.sharedUrl,
+    this.sharedImageBytes,
   });
 
   /// Show as a bottom sheet over the current route.
@@ -41,6 +45,7 @@ class QuickCaptureScreen extends StatefulWidget {
     BuildContext context, {
     String? sharedText,
     String? sharedUrl,
+    Uint8List? sharedImageBytes,
   }) {
     return showModalBottomSheet(
       context: context,
@@ -51,6 +56,7 @@ class QuickCaptureScreen extends StatefulWidget {
       builder: (_) => QuickCaptureScreen(
         sharedText: sharedText,
         sharedUrl: sharedUrl,
+        sharedImageBytes: sharedImageBytes,
       ),
     );
   }
@@ -181,6 +187,83 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen>
     // State will update when verdictStream fires
   }
 
+  Widget _buildScreenCaptureArea() {
+    final bytes = widget.sharedImageBytes!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Screen captured — verify this content',
+            style: TextStyle(
+              color: Color(0xFF888AAA),
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Image.memory(
+              bytes,
+              fit: BoxFit.contain,
+              height: 200,
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: _submitScreenImage,
+              icon: const Icon(Icons.shield_outlined, size: 18),
+              label: const Text('Verify this screen'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6C63FF),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submitScreenImage() async {
+    if (widget.sharedImageBytes == null) return;
+    setState(() {
+      _state = _VerifyState.loading;
+      _result = null;
+      _errorMsg = null;
+    });
+    final authProvider = context.read<AuthProvider>();
+    final token = await authProvider.refreshIfNeeded() ?? await authProvider.getAccessToken();
+    final claimProvider = context.read<ClaimProvider>();
+    final claim = await claimProvider.verifyClaim(
+      type: InputType.image,
+      imageBytes: widget.sharedImageBytes!,
+      imageFilename: 'screen_capture.jpg',
+      platform: 'unknown',
+      shares: 0,
+      accessToken: token,
+    );
+    if (!mounted) return;
+    if (claim != null) {
+      setState(() {
+        _result = claim;
+        _state = _VerifyState.done;
+      });
+    } else {
+      setState(() {
+        _errorMsg = claimProvider.error ?? 'Verification failed';
+        _state = _VerifyState.error;
+      });
+    }
+  }
+
   bool _looksLikeUrl(String s) =>
       s.startsWith('http://') ||
       s.startsWith('https://') ||
@@ -307,9 +390,11 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen>
             const Divider(color: Color(0xFF252540), height: 1),
             const SizedBox(height: 12),
 
-            // ── Body depends on state ──────────────────────────────
+            // ── Body: screen capture image (when bubble captured) or normal input ──────────────────────────────
             if (_state == _VerifyState.idle || _state == _VerifyState.error)
-              _buildInputArea(),
+              widget.sharedImageBytes != null
+                  ? _buildScreenCaptureArea()
+                  : _buildInputArea(),
 
             if (_state == _VerifyState.loading) _buildLoadingArea(),
 
@@ -380,6 +465,18 @@ class _QuickCaptureScreenState extends State<QuickCaptureScreen>
               ),
             ],
           ),
+          if (widget.sharedText == null && widget.sharedUrl == null) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'Checking a post from another app? Use Share → Fracta from that app to verify.',
+              style: TextStyle(
+                color: Color(0xFF888AAA),
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: 10),
 
           if (_mode == _CaptureMode.voice)

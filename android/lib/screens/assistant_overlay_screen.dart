@@ -115,6 +115,12 @@ class _AssistantOverlayScreenState extends State<AssistantOverlayScreen> {
               'Listening for your claim...',
               style: TextStyle(fontSize: 14, color: AppColors.onSurface),
             ),
+            SizedBox(height: 12),
+            Text(
+              'Tip: To verify a post on screen, share it to Fracta from the app (Share → Fracta).',
+              style: TextStyle(fontSize: 11, color: AppColors.onSurface, fontStyle: FontStyle.italic),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),
@@ -145,6 +151,12 @@ class _AssistantOverlayScreenState extends State<AssistantOverlayScreen> {
             Text(
               'Speak your claim now',
               style: TextStyle(fontSize: 14, color: AppColors.onSurface),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Say e.g. "Is this post real?" — then share the post to Fracta to verify.',
+              style: TextStyle(fontSize: 11, color: AppColors.onSurface, fontStyle: FontStyle.italic),
+              textAlign: TextAlign.center,
             ),
           ],
         ),

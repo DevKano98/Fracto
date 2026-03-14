@@ -35,6 +35,9 @@
     <!-- Floating bubble -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
+    <!-- Screen capture when bubble is on (Android 14+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+
     <application
         android:label="Fracta"
         android:name="${applicationName}"
@@ -89,6 +92,12 @@
             android:exported="false"
             android:foregroundServiceType="microphone"
             tools:replace="android:exported"/>
+
+        <!-- Screen capture service: captures current screen when user taps bubble -->
+        <service
+            android:name=".ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"/>
 
         <!-- Boot receiver: restart service after reboot -->
         <receiver

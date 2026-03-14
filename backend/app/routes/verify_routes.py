@@ -599,6 +599,7 @@ async def verify_url(
 async def verify_voice(
     request: Request,
     file: UploadFile = File(...),
+    screen_image: Optional[UploadFile] = File(None),
     language: str = Form(default="hi-IN"),
     platform: str = Form(default="unknown"),
     shares: int = Form(default=0),
@@ -608,6 +609,28 @@ async def verify_voice(
     transcript = await speech_to_text(audio_bytes, language, filename=file.filename, content_type=file.content_type) or "Could not transcribe audio"
     detected_lang = await detect_language(transcript) if transcript else language
 
+    # Live screen + voice: OCR screen (Gemini/OpenRouter), merge with STT, then full pipeline (search, TTS)
+    visual_context = {}
+    if screen_image and screen_image.filename:
+        try:
+            image_bytes = await screen_image.read()
+            if image_bytes:
+                image_result = await process_image(image_bytes)  # Gemini OCR, OpenRouter fallback
+                visual_context = {
+                    "manipulation_detected": image_result.get("manipulation_detected", False),
+                    "fake_govt_logo": image_result.get("fake_govt_logo", False),
+                    "morphed_person": image_result.get("morphed_person", False),
+                }
+                screen_text = (image_result.get("extracted_text", "") or image_result.get("image_summary", "")).strip()
+                if screen_text:
+                    # Combine as live transcript: screen content first (what user sees), then what they said
+                    transcript = (
+                        f"LIVE SCREEN CONTENT (OCR):\n{screen_text[:3000]}\n\n"
+                        f"USER SAID: {transcript}"
+                    )
+        except Exception as img_e:
+            logger.warning("Voice + screen image processing failed: %s", img_e)
+
     try:
         result = await asyncio.wait_for(
             _run_full_pipeline(
@@ -616,7 +639,7 @@ async def verify_voice(
                 platform=platform,
                 shares=shares,
                 visual_flags=[],
-                visual_context={},
+                visual_context=visual_context,
                 language=detected_lang,
                 current_user=current_user,
             ),

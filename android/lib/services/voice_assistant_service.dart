@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../constants.dart';
 import '../models/claim_model.dart';
+import 'native_settings_service.dart';
 
 enum VoiceAssistantState {
   idle,
@@ -229,6 +230,19 @@ class VoiceAssistantService extends ChangeNotifier {
       final file = File(path);
       final bytes = await file.readAsBytes();
 
+      // Live screen capture: capture what's on screen while user spoke (OCR + pipeline on backend)
+      List<int>? screenBytes;
+      final screenPath = await NativeSettingsService.captureScreen();
+      if (screenPath != null) {
+        try {
+          final screenFile = File(screenPath);
+          if (await screenFile.exists()) {
+            screenBytes = await screenFile.readAsBytes();
+            try { await screenFile.delete(); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+
       final request = http.MultipartRequest(
         'POST',
         Uri.parse('${AppConstants.baseUrl}/verify/voice'),
@@ -239,6 +253,18 @@ class VoiceAssistantService extends ChangeNotifier {
         bytes,
         filename: 'voice_claim.wav',
       ));
+
+      if (screenBytes != null && screenBytes.isNotEmpty) {
+        request.files.add(http.MultipartFile.fromBytes(
+          'screen_image',
+          screenBytes,
+          filename: 'live_screen.jpg',
+        ));
+      }
+
+      request.fields['language'] = 'en-IN';
+      request.fields['platform'] = 'unknown';
+      request.fields['shares'] = '0';
 
       final response = await request.send();
       final responseData = await response.stream.bytesToString();

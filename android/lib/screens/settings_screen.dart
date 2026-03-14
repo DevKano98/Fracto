@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../services/background_service.dart';
 import '../services/floating_bubble_service.dart';
+import '../services/native_settings_service.dart';
 import '../services/overlay_service.dart';
 import '../services/voice_assistant_service.dart';
 import '../theme.dart';
@@ -86,11 +87,39 @@ class _SettingsScreenState extends State<SettingsScreen>
             duration: Duration(seconds: 5),
           ),
         );
+      } else if (ok && mounted) {
+        _showBatteryOptimizationPrompt();
       }
     } else {
       await FloatingBubbleService.disableBubble();
     }
     await _loadStatus();
+  }
+
+  void _showBatteryOptimizationPrompt() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Keep assistant running'),
+        content: const Text(
+          'To prevent Android from stopping the floating bubble and voice assistant, disable battery optimization for Fracta.\n\n'
+          'Settings → Battery → Battery optimization → Fracta → Don\'t optimize.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Later'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              NativeSettingsService.openBatteryOptimizationSettings();
+            },
+            child: const Text('Open settings'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _requestOverlayPermission() async {

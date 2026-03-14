@@ -17,6 +17,7 @@ import '../providers/claim_provider.dart';
 import '../services/background_service.dart';
 import '../services/share_handler_service.dart';
 import '../services/floating_bubble_service.dart';
+import '../services/native_settings_service.dart';
 import '../services/overlay_service.dart';
 import '../services/voice_assistant_service.dart';
 import 'assistant_overlay_screen.dart';
@@ -144,12 +145,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Wire overlay bubble tap → open quick-capture ───────────────────
+  // ── Wire overlay bubble tap → capture screen (if available) and open quick-capture ───────────────────
   void _wireOverlayMessages() {
-    _overlaySub = OverlayService.overlayMessages.listen((data) {
-      if (data['action'] == 'open_capture') {
-        if (mounted) QuickCaptureScreen.show(context);
+    _overlaySub = OverlayService.overlayMessages.listen((data) async {
+      if (data['action'] != 'open_capture') return;
+      if (!mounted) return;
+      // Real-time screen capture when bubble is on: capture what user sees, then open quick capture with it
+      String? path = await NativeSettingsService.captureScreen();
+      Uint8List? imageBytes;
+      if (path != null) {
+        try {
+          final file = File(path);
+          if (await file.exists()) {
+            imageBytes = await file.readAsBytes();
+            try { await file.delete(); } catch (_) {}
+          }
+        } catch (_) {}
       }
+      if (!mounted) return;
+      QuickCaptureScreen.show(context, sharedImageBytes: imageBytes);
     });
   }
 

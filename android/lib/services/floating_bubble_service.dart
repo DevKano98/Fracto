@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'native_settings_service.dart';
 import 'overlay_service.dart';
 
 class FloatingBubbleService {
@@ -36,10 +37,11 @@ class FloatingBubbleService {
     try {
       if (await FlutterOverlayWindow.isPermissionGranted()) return true;
       await _setPendingBubble(true);
-      // Open overlay permission screen (user must enable "Fracta" in the list)
+      // Prefer native intent so user is taken to the exact "Display over other apps" screen
+      await NativeSettingsService.openOverlaySettings();
+      // Fallback: plugin and permission_handler
       final status = await Permission.systemAlertWindow.request();
       if (status.isGranted) return true;
-      // Plugin fallback in case permission_handler didn't open the right screen
       await FlutterOverlayWindow.requestPermission();
       return await FlutterOverlayWindow.isPermissionGranted();
     } catch (e) {
@@ -63,7 +65,11 @@ class FloatingBubbleService {
       await _setPendingBubble(false);
       // Show overlay first (main app still in foreground), then start background service
       final shown = await OverlayService.showBubble(skipPermissionCheck: true);
-      if (shown) await startBackgroundService();
+      if (shown) {
+        await startBackgroundService();
+        // Request screen capture so tapping the bubble can capture what the user sees in real time
+        NativeSettingsService.requestScreenCapturePermission();
+      }
       return shown;
     } catch (e) {
       if (kDebugMode) debugPrint('FloatingBubbleService.enableBubble: $e');
@@ -105,6 +111,7 @@ class FloatingBubbleService {
     try {
       await _setPendingBubble(false);
       await OverlayService.hideBubble();
+      NativeSettingsService.stopScreenCapture();
     } catch (_) {}
   }
 
