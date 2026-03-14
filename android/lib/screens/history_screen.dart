@@ -24,15 +24,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
   final ScrollController _scrollController = ScrollController();
 
   bool _fetching = false;
+  bool _initialLoadDone = false;
 
   @override
   void initState() {
     super.initState();
-
     _scrollController.addListener(_handleScroll);
-
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadHistory(refresh: true);
+      if (!_initialLoadDone) {
+        _initialLoadDone = true;
+        _loadHistory(refresh: true);
+      }
     });
   }
 
@@ -72,19 +74,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   void _handleScroll() {
-    final claimProvider = context.read<ClaimProvider>();
-
     if (!_scrollController.hasClients) return;
-
     final position = _scrollController.position;
-
-    if (position.pixels >= position.maxScrollExtent - 150) {
-      if (!claimProvider.isLoadingHistory &&
-          claimProvider.hasMoreHistory &&
-          !_fetching) {
-        _loadHistory();
-      }
+    // Paginate only when near the end (150px from bottom)
+    if (position.pixels < position.maxScrollExtent - 150) return;
+    final claimProvider = context.read<ClaimProvider>();
+    if (claimProvider.isLoadingHistory || !claimProvider.hasMoreHistory || _fetching) {
+      return;
     }
+    _loadHistory(refresh: false);
   }
 
   IconData _sourceIcon(String? source) {

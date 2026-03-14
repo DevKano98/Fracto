@@ -27,7 +27,8 @@ logger = logging.getLogger(__name__)
 
 genai.configure(api_key=settings.GEMINI_KEY_2)
 
-VERIFY_MODEL = genai.GenerativeModel("gemini-1.5-flash")
+# Stable model: Gemini 2.5 Flash (best price-performance for reasoning; avoid deprecated 1.5/2.0/3 Pro)
+VERIFY_MODEL = genai.GenerativeModel("gemini-2.5-flash")
 
 MAX_EVIDENCE_CHARS = 3000
 
@@ -142,12 +143,36 @@ async def _call_gemini(prompt: str) -> str:
     return ""
 
 
+def _fallback_verification(groq_fallback: Dict | None = None) -> Dict:
+    """Safe fallback when Gemini fails; use Groq pre-verdict if available."""
+    if groq_fallback:
+        verdict = groq_fallback.get("qwen_verdict") or groq_fallback.get("verdict", "UNVERIFIED")
+        confidence = float(groq_fallback.get("qwen_confidence") or groq_fallback.get("confidence", 0.5))
+        return {
+            "verdict": verdict.upper() if isinstance(verdict, str) else "UNVERIFIED",
+            "confidence": max(0.0, min(1.0, confidence)),
+            "evidence": groq_fallback.get("qwen_summary") or "Verification used Groq fallback (Gemini unavailable).",
+            "sources": groq_fallback.get("sources", []),
+            "reasoning_steps": ["Gemini verification failed; result from Groq evidence analysis."],
+            "corrective_response": groq_fallback.get("qwen_corrective") or "Claim could not be fully verified.",
+        }
+    return {
+        "verdict": "UNVERIFIED",
+        "confidence": 0.0,
+        "evidence": "Verification error",
+        "sources": [],
+        "reasoning_steps": ["LLM error"],
+        "corrective_response": "Verification failed",
+    }
+
+
 async def verify_claim(
     claim_text: str,
     ml_result: Dict,
     visual_context: Dict,
     language: str,
     rag_evidence: Dict | None = None,
+    groq_fallback: Dict | None = None,
 ) -> Dict:
 
     ml_summary = (
@@ -206,58 +231,30 @@ Analyze and return structured result.
 """
 
     retries = 3
+    parsed = None
 
     for attempt in range(retries):
-
         try:
-
             raw = await _call_gemini(prompt)
-
             raw = _clean_llm_output(raw)
-
             parsed = _parse_verification(raw)
-
             break
-
         except ResourceExhausted as e:
-
             if attempt < retries - 1:
-
                 wait = 2 ** attempt
-
-                logger.warning(
-                    "Gemini quota exceeded retry in %ss", wait
-                )
-
+                logger.warning("Gemini quota exceeded retry in %ss", wait)
                 await asyncio.sleep(wait)
-
             else:
-
                 logger.error("Gemini quota exhausted")
-
-                parsed = {
-                    "verdict": "UNVERIFIED",
-                    "confidence": 0.0,
-                    "evidence": "API quota exceeded",
-                    "sources": [],
-                    "reasoning_steps": ["Gemini quota exhausted"],
-                    "corrective_response": "Unable to verify claim right now",
-                }
-
+                parsed = _fallback_verification(groq_fallback)
+                break
         except Exception as e:
-
             logger.error("Gemini verify error: %s", e)
-
-            parsed = {
-                "verdict": "UNVERIFIED",
-                "confidence": 0.0,
-                "evidence": "Verification error",
-                "sources": [],
-                "reasoning_steps": ["LLM error"],
-                "corrective_response": "Verification failed",
-            }
-
+            parsed = _fallback_verification(groq_fallback)
             break
+
+    if parsed is None:
+        parsed = _fallback_verification(groq_fallback)
 
     ml_conf = ml_result.get("confidence", 0.5)
 

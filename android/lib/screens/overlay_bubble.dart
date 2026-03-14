@@ -9,6 +9,7 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import '../theme.dart';
 
 // Top-level entry for the overlay isolate
 @pragma('vm:entry-point')
@@ -92,13 +93,13 @@ class _OverlayBubbleWidgetState extends State<OverlayBubbleWidget>
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: _isProcessing
-                  ? const Color(0xFFFF9800)
-                  : const Color(0xFF6C63FF),
+                  ? AppColors.riskMedium
+                  : AppColors.primary,
               boxShadow: [
                 BoxShadow(
                   color: (_isProcessing
-                          ? const Color(0xFFFF9800)
-                          : const Color(0xFF6C63FF))
+                          ? AppColors.riskMedium
+                          : AppColors.primary)
                       .withOpacity(0.5),
                   blurRadius: 12,
                   spreadRadius: 2,

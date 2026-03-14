@@ -1,5 +1,19 @@
 """
 verify_routes.py — Full RAG pipeline with duplicate detection, virality, social signals.
+
+Complete verification pipeline:
+  Input (text | image | url | voice)
+    → Preprocessing (OCR / scrape / STT)
+    → Language detection (Sarvam + Groq)
+    → Claim extraction (Groq)
+    → ML classifier
+    → RAG search (news + web + social, parallel)
+    → Groq reasoning (pre-verdict)
+    → Gemini verification (final verdict; fallback to Groq if Gemini fails)
+    → Final verdict
+    → Store result in Supabase
+    → Return response
+    → Optional voice output (TTS in original language)
 """
 
 import asyncio
@@ -10,7 +24,7 @@ import logging
 from typing import Optional
 
 import requests as http_requests
-from fastapi import APIRouter, File, Form, Request, UploadFile, Depends, Security
+from fastapi import APIRouter, File, Form, Request, UploadFile, Depends, Security, HTTPException
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel
 from slowapi import Limiter
@@ -101,6 +115,9 @@ def _redis_set(key: str, value: str, ex: int = 3600):
 
 def _cache_key(text: str) -> str:
     return "fracta:claim:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+PIPELINE_TIMEOUT_SECONDS = 90
 
 
 def _safe_json(data: dict) -> str:
@@ -231,9 +248,24 @@ async def _run_full_pipeline_impl(
         logger.warning("RAG evidence failed: %s", exc)
         rag_evidence = {"evidence_summary": "", "has_govt_source": False, "has_factchecker_source": False}
 
-    # 5. LLM verification with RAG context injected
+    # 5. LLM verification with RAG context injected; Groq pre-verdict used if Gemini fails
+    groq_fallback = None
+    if rag_evidence and rag_evidence.get("qwen_analysis"):
+        qa = rag_evidence["qwen_analysis"]
+        groq_fallback = {
+            "qwen_verdict": qa.get("qwen_verdict"),
+            "qwen_confidence": qa.get("qwen_confidence"),
+            "qwen_summary": qa.get("qwen_summary"),
+            "qwen_corrective": qa.get("qwen_corrective"),
+            "sources": [],
+        }
     verification = await verify_claim(
-        raw_text, ml_result, visual_context, language, rag_evidence=rag_evidence
+        raw_text,
+        ml_result,
+        visual_context,
+        language,
+        rag_evidence=rag_evidence,
+        groq_fallback=groq_fallback,
     )
 
     # 6. Visual flags
@@ -348,15 +380,25 @@ async def verify_text(
         except Exception:
             pass
 
-    result = await _run_full_pipeline(
-        raw_text=body.raw_text,
-        source_type=body.source_type,
-        platform=body.platform,
-        shares=body.shares,
-        visual_flags=[],
-        visual_context={},
-        current_user=current_user,
-    )
+    try:
+        result = await asyncio.wait_for(
+            _run_full_pipeline(
+                raw_text=body.raw_text,
+                source_type=body.source_type,
+                platform=body.platform,
+                shares=body.shares,
+                visual_flags=[],
+                visual_context={},
+                current_user=current_user,
+            ),
+            timeout=PIPELINE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Text verification pipeline timed out after %ss", PIPELINE_TIMEOUT_SECONDS)
+        raise HTTPException(
+            status_code=504,
+            detail="Verification took too long. Please try again.",
+        )
 
     from app.services.blog_generator import auto_generate_blog
 
@@ -380,6 +422,14 @@ async def verify_image(
     current_user: Optional[dict] = Depends(get_optional_user)
 ):
     image_bytes = await file.read()
+    cache_key_img = _cache_key(f"image:{hashlib.sha256(image_bytes).hexdigest()}")
+    cached = _redis_get(cache_key_img)
+    if cached:
+        try:
+            return ClaimResponse(**json.loads(cached))
+        except Exception:
+            pass
+
     image_result = await process_image(image_bytes)
 
     extracted_text = image_result.get("extracted_text", "") or image_result.get("image_summary", "No text extracted")
@@ -391,16 +441,23 @@ async def verify_image(
         "morphed_person": image_result.get("morphed_person", False),
     }
 
-    result = await _run_full_pipeline(
-        raw_text=extracted_text,
-        source_type="image",
-        platform=detected_platform,
-        shares=shares,
-        visual_flags=[],
-        visual_context=visual_context,
-        language=language,
-        current_user=current_user,
-    )
+    try:
+        result = await asyncio.wait_for(
+            _run_full_pipeline(
+                raw_text=extracted_text,
+                source_type="image",
+                platform=detected_platform,
+                shares=shares,
+                visual_flags=[],
+                visual_context=visual_context,
+                language=language,
+                current_user=current_user,
+            ),
+            timeout=PIPELINE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Image verification pipeline timed out")
+        raise HTTPException(status_code=504, detail="Verification took too long. Please try again.")
 
     from app.services.blog_generator import auto_generate_blog
 
@@ -411,6 +468,7 @@ async def verify_image(
             logger.exception("Background blog generation failed: %s", exc)
 
     asyncio.create_task(_safe_blog_task(result))
+    _redis_set(cache_key_img, _safe_json(result))
     return ClaimResponse(**result)
 
 
@@ -440,15 +498,22 @@ async def verify_url(
     scraped = scrape_url(url_val)
     raw_text = scraped.get("text", "") or f"Content from {url_val}"
 
-    result = await _run_full_pipeline(
-        raw_text=raw_text,
-        source_type="url",
-        platform=platform_val,
-        shares=shares_val,
-        visual_flags=[],
-        visual_context={},
-        current_user=current_user,
-    )
+    try:
+        result = await asyncio.wait_for(
+            _run_full_pipeline(
+                raw_text=raw_text,
+                source_type="url",
+                platform=platform_val,
+                shares=shares_val,
+                visual_flags=[],
+                visual_context={},
+                current_user=current_user,
+            ),
+            timeout=PIPELINE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("URL verification pipeline timed out")
+        raise HTTPException(status_code=504, detail="Verification took too long. Please try again.")
 
     from app.services.blog_generator import auto_generate_blog
 
@@ -476,16 +541,23 @@ async def verify_voice(
     transcript = await speech_to_text(audio_bytes, language, filename=file.filename, content_type=file.content_type) or "Could not transcribe audio"
     detected_lang = await detect_language(transcript) if transcript else language
 
-    result = await _run_full_pipeline(
-        raw_text=transcript,
-        source_type="voice",
-        platform=platform,
-        shares=shares,
-        visual_flags=[],
-        visual_context={},
-        language=detected_lang,
-        current_user=current_user,
-    )
+    try:
+        result = await asyncio.wait_for(
+            _run_full_pipeline(
+                raw_text=transcript,
+                source_type="voice",
+                platform=platform,
+                shares=shares,
+                visual_flags=[],
+                visual_context={},
+                language=detected_lang,
+                current_user=current_user,
+            ),
+            timeout=PIPELINE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Voice verification pipeline timed out")
+        raise HTTPException(status_code=504, detail="Verification took too long. Please try again.")
 
     corrective = result.get("corrective_response", "")
     ai_audio_b64 = ""

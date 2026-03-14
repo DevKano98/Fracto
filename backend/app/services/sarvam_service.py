@@ -166,8 +166,8 @@ class SarvamService:
     async def detect_language(self, text: str) -> str:
         """
         Detect language using Sarvam language identification.
+        Supports: English, Hindi, Hinglish, Marathi, Tamil, Telugu, Bengali.
         """
-
         if not text:
             return "en-IN"
 
@@ -183,6 +183,33 @@ class SarvamService:
             return self._fallback_language(text)
 
         return result.get("language_code", "en-IN")
+
+    async def translate_text(
+        self,
+        text: str,
+        target_language: str = "en-IN",
+        source_language: Optional[str] = None,
+    ) -> str:
+        """
+        Translate text to target language. Uses Groq for translation when
+        target is English; otherwise delegates to Groq generate_corrective.
+        Used in voice pipeline: non-English transcript → English → verify → translate back.
+        """
+        if not text or not text.strip():
+            return text
+        # Defer to Groq for translation (avoids circular import at module load)
+        try:
+            from app.services.groq_service import (
+                translate_to_english,
+                generate_corrective_in_language,
+            )
+            if target_language.startswith("en") or target_language == "en":
+                return await translate_to_english(text)
+            # Translate from English to target (e.g. for corrective response)
+            return await generate_corrective_in_language(text, target_language)
+        except Exception as exc:
+            logger.warning("translate_text failed: %s", exc)
+            return text
 
     def _fallback_language(self, text: str) -> str:
         """
@@ -236,3 +263,14 @@ async def text_to_speech(text: str, language: str = "hi-IN") -> bytes:
     if _sarvam:
         return await _sarvam.text_to_speech(text, language)
     return b""
+
+
+async def translate_text(
+    text: str,
+    target_language: str = "en-IN",
+    source_language: Optional[str] = None,
+) -> str:
+    """Translate text to target language (uses Groq under the hood)."""
+    if _sarvam:
+        return await _sarvam.translate_text(text, target_language, source_language)
+    return text

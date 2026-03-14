@@ -170,8 +170,7 @@ class ClaimProvider extends ChangeNotifier {
       final List<ClaimModel> claims = items.map(ClaimModel.fromJson).toList();
 
       _history.addAll(claims);
-
-      _historyOffset += claims.length; // Ensure this is treated as int
+      _historyOffset += claims.length;
 
       if (claims.length < 20) {
         _hasMoreHistory = false;

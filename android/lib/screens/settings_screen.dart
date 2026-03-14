@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../services/background_service.dart';
+import '../services/floating_bubble_service.dart';
 import '../services/overlay_service.dart';
 import '../services/voice_assistant_service.dart';
 import '../theme.dart';
@@ -15,7 +16,8 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen>
+    with WidgetsBindingObserver {
   bool _serviceRunning = false;
   bool _bubbleEnabled = false;
   bool _overlayPermission = false;
@@ -23,13 +25,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadStatus();
+      FloatingBubbleService.tryShowBubbleAfterResume(
+        startBackgroundService: FractaBackgroundService.start,
+      ).then((shown) {
+        if (shown && mounted) setState(() => _bubbleEnabled = true);
+      });
+    }
   }
 
   Future<void> _loadStatus() async {
     final running = await FractaBackgroundService.isRunning;
-    final bubble = await OverlayService.isBubbleVisible;
-    final perm = await OverlayService.hasPermission;
+    final bubble = await FloatingBubbleService.isBubbleVisible;
+    final perm = await FloatingBubbleService.hasOverlayPermission;
     if (mounted) {
       setState(() {
         _serviceRunning = running;
@@ -44,38 +65,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await FractaBackgroundService.start();
     } else {
       await FractaBackgroundService.stop();
-      if (_bubbleEnabled) await OverlayService.hideBubble();
+      if (_bubbleEnabled) await FloatingBubbleService.disableBubble();
     }
     await _loadStatus();
   }
 
   Future<void> _toggleBubble(bool enable) async {
     if (enable) {
-      if (!_overlayPermission) {
-        final granted = await OverlayService.requestPermission();
-        if (!granted) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                    'Draw-over-apps permission is required for the floating bubble.\nGo to Settings → Apps → Fracta → Appear on top'),
-                duration: Duration(seconds: 4),
-              ),
-            );
-          }
-          return;
-        }
+      final ok = await FloatingBubbleService.enableBubble(
+        startBackgroundService: FractaBackgroundService.start,
+      );
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Draw-over-apps permission is required. Grant "Appear on top" in Settings → Apps → Fracta, then return here and turn the bubble on again.',
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
       }
-      if (!_serviceRunning) await FractaBackgroundService.start();
-      await OverlayService.showBubble();
     } else {
-      await OverlayService.hideBubble();
+      await FloatingBubbleService.disableBubble();
     }
     await _loadStatus();
   }
 
   Future<void> _requestOverlayPermission() async {
-    await OverlayService.requestPermission();
+    await FloatingBubbleService.requestOverlayPermission();
     await _loadStatus();
   }
 

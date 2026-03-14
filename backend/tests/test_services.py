@@ -50,7 +50,7 @@ def test_gemini():
         try:
             import google.generativeai as genai
             genai.configure(api_key=key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel("gemini-2.5-flash")
             resp = model.generate_content("Say OK", request_options={"timeout": TIMEOUT})
             ok = "ok" in resp.text.lower() or len(resp.text) > 0
             check(key_name, ok, f"response: {resp.text[:30]}")

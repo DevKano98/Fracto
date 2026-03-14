@@ -16,6 +16,7 @@ import '../providers/auth_provider.dart';
 import '../providers/claim_provider.dart';
 import '../services/background_service.dart';
 import '../services/share_handler_service.dart';
+import '../services/floating_bubble_service.dart';
 import '../services/overlay_service.dart';
 import '../services/voice_assistant_service.dart';
 import 'assistant_overlay_screen.dart';
@@ -98,29 +99,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final running = await FractaBackgroundService.isRunning;
     if (!running) await FractaBackgroundService.start();
 
-    // Restore bubble if it was on before
+    // Restore bubble if it was on before (FloatingBubbleService ensures permission + service)
     final wasOn = await OverlayService.wasBubbleEnabled;
     if (wasOn) {
-      final hasPerm = await OverlayService.hasPermission;
+      final hasPerm = await FloatingBubbleService.hasOverlayPermission;
       if (hasPerm) {
-        await OverlayService.showBubble();
-      } else {
-        // Point 24: Explain why we need overlay permission
-        if (mounted) {
-          final grant = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              backgroundColor: AppColors.surface,
-              title: const Text('Floating Bubble'),
-              content: const Text('Fracta uses a floating bubble to let you fact-check from any app. This requires the "Appear on top" permission.'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Later')),
-                TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Enable')),
-              ],
+        await FloatingBubbleService.enableBubble(
+          startBackgroundService: FractaBackgroundService.start,
+        );
+      } else if (mounted) {
+        final grant = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppColors.surface,
+            title: const Text('Floating Bubble'),
+            content: const Text(
+              'Fracta uses a floating bubble to let you fact-check from any app. This requires the "Appear on top" permission.',
             ),
-          );
-          if (grant == true) await OverlayService.requestPermission();
-        }
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Later')),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Enable')),
+            ],
+          ),
+        );
+        if (grant == true) await FloatingBubbleService.requestOverlayPermission();
       }
     }
   }

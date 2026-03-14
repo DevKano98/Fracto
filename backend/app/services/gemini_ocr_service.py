@@ -12,7 +12,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 genai.configure(api_key=settings.GEMINI_KEY_1)
-_ocr_model = genai.GenerativeModel("gemini-1.5-flash")
+# Stable multimodal model (Gemini 2.0 Flash is deprecated; use 2.5 Flash)
+_ocr_model = genai.GenerativeModel("gemini-2.5-flash")
 
 
 def _b64(image_bytes: bytes) -> str:

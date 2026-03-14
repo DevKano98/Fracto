@@ -31,6 +31,8 @@ class _ResultScreenState extends State<ResultScreen> {
   bool _reportExpanded = false;
   String _reportType = 'WRONG_VERDICT';
   final _reportNoteController = TextEditingController();
+  final _scrollController = ScrollController();
+  final _reasoningSectionKey = GlobalKey();
   bool _isSubmittingReport = false;
   bool _reportSubmitted = false;
   bool _isPlayingAudio = false;
@@ -51,8 +53,20 @@ class _ResultScreenState extends State<ResultScreen> {
   @override
   void dispose() {
     _reportNoteController.dispose();
+    _scrollController.dispose();
     _sarvamService.dispose();
     super.dispose();
+  }
+
+  void _scrollToFullReport() {
+    final context = _reasoningSectionKey.currentContext;
+    if (context != null) {
+      Scrollable.ensureVisible(
+        context,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    }
   }
 
   Future<void> _playAudio() async {
@@ -171,47 +185,102 @@ class _ResultScreenState extends State<ResultScreen> {
           title: const Text('Verification Result'),
         ),
         body: SingleChildScrollView(
+          controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Verdict Hero Card ──────────────────────────────
+              // ── Claim Verification Result Card (modern minimal) ──
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  color: verdictColor.withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(16),
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.12),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
+                    ),
+                    BoxShadow(
+                      color: verdictColor.withOpacity(0.06),
+                      blurRadius: 20,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                   border: Border.all(
-                      color: verdictColor.withOpacity(0.6), width: 1.5),
+                    color: verdictColor.withOpacity(0.35),
+                    width: 1,
+                  ),
                 ),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    VerdictBadge(
-                      verdict: claim.llmVerdict,
-                      size: VerdictBadgeSize.large,
-                      llmConfidence: claim.llmConfidence,
+                    const Text(
+                      'Claim Verification Result',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.onSurface,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                     const SizedBox(height: 16),
+                    Center(
+                      child: VerdictBadge(
+                        verdict: claim.llmVerdict,
+                        size: VerdictBadgeSize.large,
+                        llmConfidence: claim.llmConfidence,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        RiskMeter(score: claim.riskScore, level: claim.riskLevel),
+                        if (claim.llmConfidence != null) ...[
+                          const SizedBox(width: 24),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceVariant,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              'Confidence ${(claim.llmConfidence! * 100).round()}%',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.onBackground,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 20),
                     GestureDetector(
                       onTap: () =>
                           setState(() => _claimExpanded = !_claimExpanded),
                       child: Text(
                         claim.displayClaim,
-                        maxLines: _claimExpanded ? null : 3,
+                        maxLines: _claimExpanded ? null : 2,
                         overflow: _claimExpanded
                             ? TextOverflow.visible
                             : TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontSize: 14,
                           color: AppColors.onBackground,
-                          height: 1.6,
+                          height: 1.5,
                         ),
-                        textAlign: TextAlign.center,
                       ),
                     ),
-                    if (claim.displayClaim.length > 100) ...[
-                      const SizedBox(height: 4),
+                    if (claim.displayClaim.length > 80) ...[
+                      const SizedBox(height: 6),
                       GestureDetector(
                         onTap: () =>
                             setState(() => _claimExpanded = !_claimExpanded),
@@ -225,81 +294,101 @@ class _ResultScreenState extends State<ResultScreen> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      alignment: WrapAlignment.center,
-                      children: [
-                        if (claim.sourceType != null)
-                          _SmallChip(
-                            label: claim.sourceType!.toUpperCase(),
-                            icon: Icons.source_outlined,
-                          ),
-                        if (claim.platform != null &&
-                            claim.platform != 'unknown')
-                          _SmallChip(
-                            label: claim.platform!.toUpperCase(),
-                            icon: Icons.share_outlined,
-                          ),
-                        if (claim.language != null)
-                          _SmallChip(
-                            label: claim.language!,
-                            icon: Icons.language,
-                          ),
-                      ],
+                    if (claim.correctiveResponse != null &&
+                        claim.correctiveResponse!.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Corrective explanation',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        claim.correctiveResponse!,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: AppColors.onBackground,
+                          height: 1.6,
+                        ),
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                    if (claim.sources.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Sources',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: claim.sources
+                            .take(6)
+                            .map((url) => SourceChip(url: url))
+                            .toList(),
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Actions',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.onSurface,
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Verified ${claim.timeAgo}',
-                      style: const TextStyle(
-                          fontSize: 11, color: AppColors.onSurface),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _goHome,
+                            icon: const Icon(Icons.add_task, size: 18),
+                            label: const Text('Verify another claim'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.primary,
+                              side: const BorderSide(color: AppColors.primary),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _scrollToFullReport,
+                            icon: const Icon(Icons.article_outlined, size: 18),
+                            label: const Text('View full report'),
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 24),
 
-              // ── Risk Meter ─────────────────────────────────────
-              Center(
-                child: Column(
-                  children: [
-                    RiskMeter(score: claim.riskScore, level: claim.riskLevel),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${claim.riskLevel} RISK',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.riskColor(claim.riskLevel),
-                        letterSpacing: 1,
-                      ),
-                    ),
-                    if (claim.viralityScore != null ||
-                        claim.estimatedReach != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        [
-                          if (claim.viralityScore != null)
-                            'Virality: ${claim.viralityScore!.toStringAsFixed(1)}',
-                          if (claim.estimatedReach != null)
-                            'Estimated reach: ${claim.formattedReach}',
-                        ].join('  |  '),
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.onSurface,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 28),
-
               // ── AI Reasoning Chain ─────────────────────────────
               if (claim.reasoningSteps.isNotEmpty) ...[
                 _SectionHeader(
+                  key: _reasoningSectionKey,
                   title: 'How AI Verified This',
                   icon: Icons.auto_awesome_outlined,
                   tooltip: 'Step-by-step verification chain',
@@ -670,6 +759,7 @@ class _SectionHeader extends StatelessWidget {
   final String? tooltip;
 
   const _SectionHeader({
+    super.key,
     required this.title,
     required this.icon,
     this.tooltip,

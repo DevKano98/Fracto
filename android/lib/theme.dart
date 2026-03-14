@@ -1,22 +1,28 @@
 // ========== FILE: lib/theme.dart ==========
+// Color scheme: white, orange, light gray. Typography: Roboto.
 
 import 'package:flutter/material.dart';
 
 class AppColors {
-  static const Color primary = Color(0xFF6C63FF);
-  static const Color primaryDark = Color(0xFF4A42CC);
-  static const Color background = Color(0xFF0D0D1A);
-  static const Color surface = Color(0xFF1A1A2E);
-  static const Color surfaceVariant = Color(0xFF252540);
-  static const Color onBackground = Color(0xFFF0F0FF);
-  static const Color onSurface = Color(0xFFB0B0CC);
-  static const Color verdictTrue = Color(0xFF00C896);
-  static const Color verdictFalse = Color(0xFFFF4D6D);
-  static const Color verdictMisleading = Color(0xFFFFB347);
-  static const Color verdictUnverified = Color(0xFF888AAA);
-  static const Color riskHigh = Color(0xFFFF4D6D);
-  static const Color riskMedium = Color(0xFFFFB347);
-  static const Color riskLow = Color(0xFF00C896);
+  // Primary: orange
+  static const Color primary = Color(0xFFE65100);       // Material Orange 900
+  static const Color primaryDark = Color(0xFFBF360C);  // Darker orange
+  // Backgrounds: white and light grays
+  static const Color background = Color(0xFFFFFFFF);   // White
+  static const Color surface = Color(0xFFFAFAFA);      // Off-white
+  static const Color surfaceVariant = Color(0xFFEEEEEE); // Light gray
+  static const Color borderLight = Color(0xFFE0E0E0);  // Border gray
+  // Text on white/light
+  static const Color onBackground = Color(0xFF212121); // Near black
+  static const Color onSurface = Color(0xFF757575);    // Gray text
+  // Verdict / risk (readable on light)
+  static const Color verdictTrue = Color(0xFF2E7D32);   // Green
+  static const Color verdictFalse = Color(0xFFC62828);  // Red
+  static const Color verdictMisleading = Color(0xFFEF6C00); // Orange
+  static const Color verdictUnverified = Color(0xFF757575);  // Gray
+  static const Color riskHigh = Color(0xFFC62828);
+  static const Color riskMedium = Color(0xFFEF6C00);
+  static const Color riskLow = Color(0xFF2E7D32);
 
   static Color verdictColor(String verdict) {
     switch (verdict.toUpperCase()) {
@@ -46,10 +52,12 @@ class AppColors {
 }
 
 class AppTheme {
-  static ThemeData get darkTheme {
+  static const String _fontFamily = 'Roboto';
+
+  static ThemeData get lightTheme {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: AppColors.primary,
-      brightness: Brightness.dark,
+      brightness: Brightness.light,
       primary: AppColors.primary,
       onPrimary: Colors.white,
       secondary: AppColors.primaryDark,
@@ -61,11 +69,11 @@ class AppTheme {
     );
 
     return ThemeData(
-      brightness: Brightness.dark,
+      brightness: Brightness.light,
       useMaterial3: true,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: AppColors.background,
-      fontFamily: 'Roboto',
+      fontFamily: _fontFamily,
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.background,
         elevation: 0,
@@ -75,7 +83,7 @@ class AppTheme {
           color: AppColors.onBackground,
           fontSize: 20,
           fontWeight: FontWeight.bold,
-          fontFamily: 'Roboto',
+          fontFamily: _fontFamily,
         ),
       ),
       cardTheme: CardThemeData(
@@ -96,6 +104,7 @@ class AppTheme {
           textStyle: const TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
+            fontFamily: _fontFamily,
           ),
         ),
       ),
@@ -122,8 +131,8 @@ class AppTheme {
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: AppColors.verdictFalse, width: 2),
         ),
-        hintStyle: const TextStyle(color: AppColors.onSurface),
-        labelStyle: const TextStyle(color: AppColors.onSurface),
+        hintStyle: const TextStyle(color: AppColors.onSurface, fontFamily: _fontFamily),
+        labelStyle: const TextStyle(color: AppColors.onSurface, fontFamily: _fontFamily),
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
@@ -132,37 +141,43 @@ class AppTheme {
           fontSize: 28,
           fontWeight: FontWeight.bold,
           color: AppColors.onBackground,
+          fontFamily: _fontFamily,
         ),
         headlineMedium: TextStyle(
           fontSize: 22,
           fontWeight: FontWeight.bold,
           color: AppColors.onBackground,
+          fontFamily: _fontFamily,
         ),
         titleLarge: TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.bold,
           color: AppColors.onBackground,
+          fontFamily: _fontFamily,
         ),
         bodyLarge: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.normal,
           color: AppColors.onBackground,
+          fontFamily: _fontFamily,
         ),
         bodyMedium: TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.normal,
           color: AppColors.onSurface,
+          fontFamily: _fontFamily,
         ),
         labelSmall: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w500,
           color: AppColors.onSurface,
+          fontFamily: _fontFamily,
         ),
       ),
-      dividerColor: AppColors.surfaceVariant,
+      dividerColor: AppColors.borderLight,
       snackBarTheme: SnackBarThemeData(
         backgroundColor: AppColors.surfaceVariant,
-        contentTextStyle: const TextStyle(color: AppColors.onBackground),
+        contentTextStyle: const TextStyle(color: AppColors.onBackground, fontFamily: _fontFamily),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
         ),
@@ -170,4 +185,7 @@ class AppTheme {
       ),
     );
   }
+
+  /// Alias so existing darkTheme references keep working (now light theme).
+  static ThemeData get darkTheme => lightTheme;
 }
