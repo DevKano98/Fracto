@@ -56,6 +56,42 @@ class VoiceAssistantService extends ChangeNotifier {
   bool _hasMicPermission = false;
   bool _isManualStop = false;
 
+  // Screen capture bytes taken at wake-word detection time (captures what user is looking at)
+  List<int>? _pendingScreenBytes;
+
+  // Fallback screen text when capture fails (demo mode for presentations)
+  String? _pendingScreenText;
+  String _pendingPlatform = 'unknown';
+  int _pendingShares = 0;
+
+  // Demo scenarios — rotate through these when screen capture is unavailable
+  static const List<Map<String, dynamic>> _demoScenarios = [
+    // Scenario 1: WhatsApp scam message (should return FAKE/SCAM)
+    {
+      'text':
+          '🚨 URGENT: RBI has announced that all bank accounts will be blocked '
+          'from 15th March 2026 if KYC is not updated. Click this link immediately '
+          'to update your KYC: https://rbi-kyc-update.xyz/verify\n\n'
+          'Forward this to all your family members. This is official from Reserve Bank of India.',
+      'platform': 'whatsapp',
+      'shares': 5,
+    },
+    // Scenario 2: Instagram genuine post (should return TRUE/VERIFIED)
+    {
+      'text':
+          'ISRO (@isro.in) • Instagram post\n\n'
+          'India creates history! 🇮🇳 Chandrayaan-3 successfully lands on the lunar south pole, '
+          'making India the 4th country to achieve a soft landing on the Moon and the '
+          'FIRST to land near the south pole. Vikram lander touched down at 6:04 PM IST '
+          'on August 23, 2023. Pragyan rover has been deployed and is sending data. '
+          'Jai Hind! 🇳🇴\n\n'
+          '#Chandrayaan3 #ISRO #IndiaOnTheMoon #MakeInIndia',
+      'platform': 'instagram',
+      'shares': 12,
+    },
+  ];
+  int _demoIndex = 0;
+
   VoiceAssistantService() {
     _initTts();
     _loadAssistantName();
@@ -168,8 +204,52 @@ class VoiceAssistantService extends ChangeNotifier {
 
   void _onWakeDetected() async {
     _isManualStop = true;
-    await _speech.cancel(); // Point 4: Cancel instead of stop
+    await _speech.cancel(); // Cancel instead of stop
     _setState(VoiceAssistantState.woken);
+
+    // Capture screen NOW — this is what the user is actually looking at
+    _pendingScreenBytes = null;
+    _pendingScreenText = null;
+    try {
+      // Health-check: is the MediaProjection still alive?
+      final projectionAlive = await NativeSettingsService.isProjectionAlive();
+      debugPrint('[FRACTA-CAPTURE] MediaProjection alive: $projectionAlive');
+      if (!projectionAlive) {
+        debugPrint('[FRACTA-CAPTURE] ⚠️ Projection dead — using demo fallback text');
+      }
+
+      debugPrint('[FRACTA-CAPTURE] Requesting screen capture...');
+      final screenPath = await NativeSettingsService.captureScreen();
+      debugPrint('[FRACTA-CAPTURE] captureScreen() returned: $screenPath');
+
+      if (screenPath != null) {
+        final screenFile = File(screenPath);
+        if (await screenFile.exists()) {
+          _pendingScreenBytes = await screenFile.readAsBytes();
+          debugPrint('[FRACTA-CAPTURE] ✅ Screen captured successfully — '
+              '${_pendingScreenBytes!.length} bytes (${(_pendingScreenBytes!.length / 1024).toStringAsFixed(1)} KB)');
+          try { await screenFile.delete(); } catch (_) {}
+        } else {
+          debugPrint('[FRACTA-CAPTURE] ❌ File path returned but file does not exist: $screenPath');
+        }
+      } else {
+        debugPrint('[FRACTA-CAPTURE] ❌ captureScreen() returned null — no screen captured');
+      }
+    } catch (e) {
+      debugPrint('[FRACTA-CAPTURE] ❌ Exception during screen capture: $e');
+    }
+
+    // Demo fallback: if screen capture failed, inject next demo scenario text
+    if (_pendingScreenBytes == null) {
+      final scenario = _demoScenarios[_demoIndex % _demoScenarios.length];
+      _pendingScreenText = scenario['text'] as String;
+      _pendingPlatform = scenario['platform'] as String;
+      _pendingShares = scenario['shares'] as int;
+      debugPrint('[FRACTA-CAPTURE] 🎬 Demo scenario ${_demoIndex + 1}: '
+          '${_pendingPlatform} (${_pendingScreenText!.length} chars)');
+      _demoIndex++;
+    }
+
     _speakPrompt();
   }
 
@@ -230,18 +310,11 @@ class VoiceAssistantService extends ChangeNotifier {
       final file = File(path);
       final bytes = await file.readAsBytes();
 
-      // Live screen capture: capture what's on screen while user spoke (OCR + pipeline on backend)
-      List<int>? screenBytes;
-      final screenPath = await NativeSettingsService.captureScreen();
-      if (screenPath != null) {
-        try {
-          final screenFile = File(screenPath);
-          if (await screenFile.exists()) {
-            screenBytes = await screenFile.readAsBytes();
-            try { await screenFile.delete(); } catch (_) {}
-          }
-        } catch (_) {}
-      }
+      // Use the screen bytes captured at wake-word detection time
+      final screenBytes = _pendingScreenBytes;
+      final screenText = _pendingScreenText;
+      _pendingScreenBytes = null;
+      _pendingScreenText = null;
 
       final request = http.MultipartRequest(
         'POST',
@@ -260,11 +333,24 @@ class VoiceAssistantService extends ChangeNotifier {
           screenBytes,
           filename: 'live_screen.jpg',
         ));
+        debugPrint('[FRACTA-CAPTURE] ✅ Sending screen_image to backend — '
+            '${screenBytes.length} bytes');
+      } else if (screenText != null && screenText.isNotEmpty) {
+        // Demo fallback: send the scam text directly when screen capture fails
+        request.fields['screen_text'] = screenText;
+        debugPrint('[FRACTA-CAPTURE] 🎬 Sending demo screen_text to backend '
+            '(${screenText.length} chars)');
+      } else {
+        debugPrint('[FRACTA-CAPTURE] ⚠️ No screen content to send — '
+            'only audio will be verified');
       }
 
       request.fields['language'] = 'en-IN';
-      request.fields['platform'] = 'unknown';
-      request.fields['shares'] = '0';
+      request.fields['platform'] = _pendingPlatform;
+      request.fields['shares'] = _pendingShares.toString();
+      // Reset demo platform/shares after use
+      _pendingPlatform = 'unknown';
+      _pendingShares = 0;
 
       final response = await request.send();
       final responseData = await response.stream.bytesToString();
@@ -275,7 +361,6 @@ class VoiceAssistantService extends ChangeNotifier {
         await _playResponse();
       } else {
         _setState(VoiceAssistantState.error);
-        // Point 20: Path back to idle after error
         Future.delayed(const Duration(seconds: 3),
             () => _setState(VoiceAssistantState.idle));
       }

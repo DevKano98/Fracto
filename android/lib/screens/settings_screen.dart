@@ -39,13 +39,18 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      Future<void>.delayed(const Duration(milliseconds: 300), () async {
+      // Delay to let the OS update permission state before we check
+      Future<void>.delayed(const Duration(milliseconds: 500), () async {
         if (!mounted) return;
         await _loadStatus();
         final shown = await FloatingBubbleService.tryShowBubbleAfterResume(
           startBackgroundService: FractaBackgroundService.start,
         );
         if (shown && mounted) setState(() => _bubbleEnabled = true);
+        // Retry status load in case permission state was slow to propagate on some OEMs
+        Future<void>.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) _loadStatus();
+        });
       });
     }
   }
@@ -124,7 +129,12 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   Future<void> _requestOverlayPermission() async {
     await FloatingBubbleService.requestOverlayPermission();
+    // Force-reload status after a delay to pick up the new permission state
+    await Future<void>.delayed(const Duration(milliseconds: 600));
     await _loadStatus();
+    // Retry once more with a longer delay for slow OEMs
+    await Future<void>.delayed(const Duration(milliseconds: 1000));
+    if (mounted) await _loadStatus();
   }
 
   @override

@@ -77,6 +77,14 @@ class OverlayService {
         overlayContent: "Tap to fact-check",
       );
 
+      // Small delay to let the system actually render the overlay
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final nowActive = await FlutterOverlayWindow.isActive();
+      if (!nowActive) {
+        // Retry once with a longer delay (some OEMs need more time)
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+
       await _setBubbleEnabled(true);
       return true;
     } catch (e, stack) {

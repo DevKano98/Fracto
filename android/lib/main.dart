@@ -17,31 +17,13 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
-import 'screens/overlay_bubble.dart';
 import 'services/background_service.dart';
 import 'services/floating_bubble_service.dart';
+import 'services/native_settings_service.dart';
 import 'services/voice_assistant_service.dart';
 import 'theme.dart';
-import 'dart:ui';
 
-// ── Overlay entry point ────────────────────────────────────────────────────
-// flutter_overlay_window calls this top-level function (in its own isolate)
-// to render the floating bubble. Must be annotated and top-level.
-@pragma('vm:entry-point')
-void overlayMain() {
-  DartPluginRegistrant.ensureInitialized();
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const _OverlayBubbleApp());
-}
-
-class _OverlayBubbleApp extends StatelessWidget {
-  const _OverlayBubbleApp();
-  @override
-  Widget build(BuildContext context) => MaterialApp(
-        debugShowCheckedModeBanner: false,
-        home: const OverlayBubbleWidget(),
-      );
-}
+// ── Overlay entry point is in overlay_bubble.dart (single source of truth) ──
 
 // ── Main entry point ───────────────────────────────────────────────────────
 void main() async {
@@ -108,7 +90,23 @@ class _FractaAppWithOverlayResumeState extends State<_FractaAppWithOverlayResume
       FloatingBubbleService.tryShowBubbleAfterResume(
         startBackgroundService: FractaBackgroundService.start,
       );
+      // If bubble is visible but projection is dead, re-request screen capture
+      _reRequestScreenCaptureIfNeeded();
     }
+  }
+
+  Future<void> _reRequestScreenCaptureIfNeeded() async {
+    try {
+      final bubbleVisible = await FloatingBubbleService.isBubbleVisible;
+      if (!bubbleVisible) return;
+      final projectionAlive = await NativeSettingsService.isProjectionAlive();
+      if (!projectionAlive) {
+        debugPrint('[FRACTA-BUBBLE] App resumed — bubble visible but projection dead, re-requesting screen capture');
+        // Small delay so the app fully resumes before showing system dialog
+        await Future<void>.delayed(const Duration(milliseconds: 800));
+        NativeSettingsService.requestScreenCapturePermission();
+      }
+    } catch (_) {}
   }
 
   @override

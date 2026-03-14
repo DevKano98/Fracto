@@ -600,6 +600,7 @@ async def verify_voice(
     request: Request,
     file: UploadFile = File(...),
     screen_image: Optional[UploadFile] = File(None),
+    screen_text: Optional[str] = Form(None),
     language: str = Form(default="hi-IN"),
     platform: str = Form(default="unknown"),
     shares: int = Form(default=0),
@@ -621,15 +622,22 @@ async def verify_voice(
                     "fake_govt_logo": image_result.get("fake_govt_logo", False),
                     "morphed_person": image_result.get("morphed_person", False),
                 }
-                screen_text = (image_result.get("extracted_text", "") or image_result.get("image_summary", "")).strip()
-                if screen_text:
+                ocr_text = (image_result.get("extracted_text", "") or image_result.get("image_summary", "")).strip()
+                if ocr_text:
                     # Combine as live transcript: screen content first (what user sees), then what they said
                     transcript = (
-                        f"LIVE SCREEN CONTENT (OCR):\n{screen_text[:3000]}\n\n"
+                        f"LIVE SCREEN CONTENT (OCR):\n{ocr_text[:3000]}\n\n"
                         f"USER SAID: {transcript}"
                     )
         except Exception as img_e:
             logger.warning("Voice + screen image processing failed: %s", img_e)
+    elif screen_text and screen_text.strip():
+        # Demo/fallback: frontend sent pre-extracted text (screen capture unavailable)
+        logger.info("Using screen_text fallback (%d chars)", len(screen_text))
+        transcript = (
+            f"LIVE SCREEN CONTENT:\n{screen_text.strip()[:3000]}\n\n"
+            f"USER SAID: {transcript}"
+        )
 
     try:
         result = await asyncio.wait_for(

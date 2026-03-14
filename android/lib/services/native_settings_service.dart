@@ -28,6 +28,15 @@ class NativeSettingsService {
     } on PlatformException catch (_) {}
   }
 
+  /// Request per-app battery optimization exemption (ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).
+  /// Shows a system dialog asking the user to disable battery optimization for Fracta only.
+  /// This is more targeted than opening the full battery settings.
+  static Future<void> requestBatteryExemption() async {
+    try {
+      await _channel.invokeMethod<void>('requestBatteryExemption');
+    } on PlatformException catch (_) {}
+  }
+
   /// Whether overlay (draw over other apps) permission is granted (Android).
   static Future<bool> canDrawOverlays() async {
     try {
@@ -65,5 +74,16 @@ class NativeSettingsService {
     try {
       await _channel.invokeMethod<void>('stopScreenCapture');
     } on PlatformException catch (_) {}
+  }
+
+  /// Whether the MediaProjection screen capture is currently alive.
+  static Future<bool> isProjectionAlive() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final alive = await _channel.invokeMethod<bool>('isProjectionAlive');
+      return alive ?? false;
+    } on PlatformException catch (_) {
+      return false;
+    }
   }
 }

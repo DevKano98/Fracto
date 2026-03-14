@@ -8,7 +8,6 @@
 // - Draggable bubble, opens assistant overlay, always accessible
 
 import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'native_settings_service.dart';
@@ -31,19 +30,21 @@ class FloatingBubbleService {
   }
 
   /// Request overlay permission: open system "Display over other apps" settings.
-  /// Use permission_handler so user is taken to the right screen.
+  /// Uses a SINGLE path to avoid stacking multiple settings screens.
   /// Sets pending so when user returns and grants, tryShowBubbleAfterResume can show the bubble.
   static Future<bool> requestOverlayPermission() async {
     try {
       if (await FlutterOverlayWindow.isPermissionGranted()) return true;
       await _setPendingBubble(true);
-      // Prefer native intent so user is taken to the exact "Display over other apps" screen
-      await NativeSettingsService.openOverlaySettings();
-      // Fallback: plugin and permission_handler
-      final status = await Permission.systemAlertWindow.request();
-      if (status.isGranted) return true;
+      // Open the system "Display over other apps" settings (single path — no stacking)
       await FlutterOverlayWindow.requestPermission();
-      return await FlutterOverlayWindow.isPermissionGranted();
+      // After user returns, check if granted
+      final granted = await FlutterOverlayWindow.isPermissionGranted();
+      if (granted) {
+        await _setPendingBubble(false);
+        return true;
+      }
+      return false; // Will be picked up by tryShowBubbleAfterResume on app resume
     } catch (e) {
       if (kDebugMode) debugPrint('FloatingBubbleService.requestOverlayPermission: $e');
       return false;
@@ -67,7 +68,14 @@ class FloatingBubbleService {
       final shown = await OverlayService.showBubble(skipPermissionCheck: true);
       if (shown) {
         await startBackgroundService();
+        // Request battery optimization exemption so OEMs don't kill the service
+        if (kDebugMode) debugPrint('[FRACTA-BUBBLE] Requesting battery exemption...');
+        NativeSettingsService.requestBatteryExemption();
+        // IMPORTANT: Delay before screen capture request — MIUI can't stack two system dialogs.
+        // Give user time to handle the battery dialog first.
+        await Future<void>.delayed(const Duration(seconds: 2));
         // Request screen capture so tapping the bubble can capture what the user sees in real time
+        if (kDebugMode) debugPrint('[FRACTA-BUBBLE] Requesting screen capture permission...');
         NativeSettingsService.requestScreenCapturePermission();
       }
       return shown;

@@ -49,11 +49,19 @@ class ScreenCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                // Must call startForeground() immediately (Android 12+ kills app otherwise)
+                startForegroundNotification()
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, -1)
-                val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
-                if (data != null && resultCode != -1) {
-                    startForegroundWithProjection(resultCode, data)
+                val data = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(EXTRA_DATA, Intent::class.java)
                 } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(EXTRA_DATA)
+                }
+                if (data != null && resultCode != -1) {
+                    setupProjection(resultCode, data)
+                } else {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
             }
@@ -68,7 +76,8 @@ class ScreenCaptureService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startForegroundWithProjection(resultCode: Int, data: Intent) {
+    /** Call this first so the system doesn't kill the app (foreground service timeout). */
+    private fun startForegroundNotification() {
         val channelId = "fracta_screen_capture"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -95,14 +104,24 @@ class ScreenCaptureService : Service() {
             @Suppress("DEPRECATION")
             startForeground(NOTIFICATION_ID, notification)
         }
-        val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = projectionManager.getMediaProjection(resultCode, data)
-        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                stopCapture()
-            }
-        }, handler)
-        setupVirtualDisplay()
+    }
+
+    private fun setupProjection(resultCode: Int, data: Intent) {
+        try {
+            val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() {
+                    stopCapture()
+                }
+            }, handler)
+            setupVirtualDisplay()
+            isProjectionAlive = true
+        } catch (e: Exception) {
+            Log.e(TAG, "Setup projection failed", e)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     private fun setupVirtualDisplay() {
@@ -121,42 +140,62 @@ class ScreenCaptureService : Service() {
     }
 
     private fun captureScreen() {
+        Log.d(TAG, "[FRACTA-CAPTURE] captureScreen() called — imageReader=${if (imageReader != null) "ready" else "NULL"}, projection=${if (mediaProjection != null) "alive" else "DEAD"}")
         val reader = imageReader ?: run {
+            Log.w(TAG, "[FRACTA-CAPTURE] ❌ No imageReader — projection not set up or already stopped")
             sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply {
                 setPackage(packageName)
                 putExtra(EXTRA_CAPTURE_PATH, null as String?)
             })
             return
         }
-        var image: Image? = null
-        try {
-            image = reader.acquireLatestImage()
-            if (image != null) {
-                val bitmap = imageToBitmap(image)
-                image.close()
-                image = null
-                if (bitmap != null) {
-                    val file = File(cacheDir, "fracta_screen_${System.currentTimeMillis()}.jpg")
-                    FileOutputStream(file).use { out ->
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+        // Try up to 2 times with a short delay if no frame is available yet
+        var attempts = 0
+        fun tryCapture() {
+            attempts++
+            Log.d(TAG, "[FRACTA-CAPTURE] Attempt $attempts — acquireLatestImage()...")
+            var image: Image? = null
+            try {
+                image = reader.acquireLatestImage()
+                if (image != null) {
+                    Log.d(TAG, "[FRACTA-CAPTURE] Got image: ${image.width}x${image.height}")
+                    val bitmap = imageToBitmap(image)
+                    image.close()
+                    image = null
+                    if (bitmap != null) {
+                        val file = File(cacheDir, "fracta_screen_${System.currentTimeMillis()}.jpg")
+                        FileOutputStream(file).use { out ->
+                            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                        }
+                        bitmap.recycle()
+                        Log.d(TAG, "[FRACTA-CAPTURE] ✅ Saved: ${file.absolutePath} (${file.length() / 1024} KB)")
+                        sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply {
+                            setPackage(packageName)
+                            putExtra(EXTRA_CAPTURE_PATH, file.absolutePath)
+                        })
+                        return
                     }
-                    bitmap.recycle()
-                    sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply {
-                        setPackage(packageName)
-                        putExtra(EXTRA_CAPTURE_PATH, file.absolutePath)
-                    })
-                    return
+                } else {
+                    Log.w(TAG, "[FRACTA-CAPTURE] acquireLatestImage() returned null (attempt $attempts)")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "[FRACTA-CAPTURE] Capture failed (attempt $attempts)", e)
+            } finally {
+                image?.close()
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Capture failed", e)
-        } finally {
-            image?.close()
+            // Retry once after a short delay to wait for a fresh frame
+            if (attempts < 2) {
+                Log.d(TAG, "[FRACTA-CAPTURE] Retrying in 150ms...")
+                handler.postDelayed({ tryCapture() }, 150)
+                return
+            }
+            Log.w(TAG, "[FRACTA-CAPTURE] ❌ All attempts exhausted — no screen captured")
+            sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply {
+                setPackage(packageName)
+                putExtra(EXTRA_CAPTURE_PATH, null as String?)
+            })
         }
-        sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply {
-            setPackage(packageName)
-            putExtra(EXTRA_CAPTURE_PATH, null as String?)
-        })
+        tryCapture()
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {
@@ -200,6 +239,7 @@ class ScreenCaptureService : Service() {
         imageReader = null
         mediaProjection?.stop()
         mediaProjection = null
+        isProjectionAlive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
@@ -220,5 +260,11 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
         const val EXTRA_CAPTURE_PATH = "capture_path"
+
+        /** Whether the MediaProjection is currently alive and capturing. */
+        @Volatile
+        @JvmStatic
+        var isProjectionAlive: Boolean = false
+            private set
     }
 }

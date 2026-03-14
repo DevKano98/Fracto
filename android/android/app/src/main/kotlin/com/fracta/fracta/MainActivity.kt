@@ -1,6 +1,7 @@
 package com.fracta.fracta
 
 import android.app.Activity
+import android.os.PowerManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -12,7 +13,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -21,23 +21,40 @@ class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "fracta/native"
 
-    private var screenCaptureResult: MethodChannel.Result? = null
     private var captureDoneReceiver: BroadcastReceiver? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val screenCapturePermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                action = ScreenCaptureService.ACTION_START
-                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(ScreenCaptureService.EXTRA_DATA, result.data)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
+    companion object {
+        private const val REQUEST_MEDIA_PROJECTION = 1001
+    }
+
+    @Deprecated("Deprecated in API 30")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_MEDIA_PROJECTION) {
+            android.util.Log.d("MainActivity", "[FRACTA-CAPTURE] onActivityResult: resultCode=$resultCode (OK=${Activity.RESULT_OK}), data=${data != null}")
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                android.util.Log.d("MainActivity", "[FRACTA-CAPTURE] ✅ User GRANTED screen capture permission — starting ScreenCaptureService")
+                val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                    action = ScreenCaptureService.ACTION_START
+                    putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
+                    putExtra(ScreenCaptureService.EXTRA_DATA, data)
+                }
+                // Post so activity is fully in foreground (avoids background start crash on Android 12+ / MIUI)
+                mainHandler.post {
+                    try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(serviceIntent)
+                        } else {
+                            startService(serviceIntent)
+                        }
+                        android.util.Log.d("MainActivity", "[FRACTA-CAPTURE] ScreenCaptureService start command sent")
+                    } catch (e: Exception) {
+                        android.util.Log.e("MainActivity", "[FRACTA-CAPTURE] ❌ Failed to start ScreenCaptureService", e)
+                    }
+                }
             } else {
-                startService(intent)
+                android.util.Log.w("MainActivity", "[FRACTA-CAPTURE] ❌ User DECLINED screen capture permission or dialog was dismissed")
             }
         }
     }
@@ -54,6 +71,10 @@ class MainActivity : FlutterActivity() {
                     openBatteryOptimizationSettings()
                     result.success(true)
                 }
+                "requestBatteryExemption" -> {
+                    requestBatteryExemption()
+                    result.success(true)
+                }
                 "canDrawOverlays" -> {
                     result.success(Settings.canDrawOverlays(this))
                 }
@@ -63,6 +84,9 @@ class MainActivity : FlutterActivity() {
                 }
                 "captureScreen" -> {
                     captureScreen(result)
+                }
+                "isProjectionAlive" -> {
+                    result.success(ScreenCaptureService.isProjectionAlive)
                 }
                 "stopScreenCapture" -> {
                     stopScreenCapture()
@@ -75,25 +99,14 @@ class MainActivity : FlutterActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        checkOverlayPermission()
+        // Overlay permission is requested only when user explicitly enables the bubble toggle
     }
 
     override fun onDestroy() {
-        screenCaptureResult = null
         captureDoneReceiver?.let { unregisterReceiver(it) }
         captureDoneReceiver = null
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
-    }
-
-    private fun checkOverlayPermission() {
-        if (!Settings.canDrawOverlays(this)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-            startActivity(intent)
-        }
     }
 
     private fun openOverlaySettings() {
@@ -115,11 +128,29 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
+    private fun requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = android.net.Uri.parse("package:$packageName")
+                }
+                try {
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    // Some OEMs block this intent — fall back to general settings
+                    openBatteryOptimizationSettings()
+                }
+            }
+        }
+    }
+
     private fun requestScreenCapturePermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         val intent = projectionManager.createScreenCaptureIntent()
-        screenCapturePermissionLauncher.launch(intent)
+        @Suppress("DEPRECATION")
+        startActivityForResult(intent, REQUEST_MEDIA_PROJECTION)
     }
 
     private var captureTimeoutRunnable: Runnable? = null
