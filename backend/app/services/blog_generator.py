@@ -17,10 +17,9 @@ logger = logging.getLogger(__name__)
 if settings.REPLICATE_API_TOKEN:
     os.environ["REPLICATE_API_TOKEN"] = settings.REPLICATE_API_TOKEN
 
+# Replicate: google/imagen-4 (prompt, aspect_ratio, safety_filter_level, output_format)
+# Do not use SDXL params: guidance_scale, num_inference_steps, negative_prompt
 IMAGE_MODEL = "google/imagen-4"
-
-IMAGE_NEGATIVE_PROMPT = "text, watermark, logo, letters, words"
-
 MAX_IMAGE_DOWNLOAD = 10 * 1024 * 1024  # 10MB
 
 
@@ -58,14 +57,13 @@ async def _generate_image(prompt: str) -> bytes:
             output = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: replicate.run(
+                    lambda _p=prompt: replicate.run(
                         IMAGE_MODEL,
                         input={
-                            "prompt": prompt,
-                            "negative_prompt": IMAGE_NEGATIVE_PROMPT,
-                            "num_outputs": 1,
-                            "guidance_scale": 7.5,
-                            "num_inference_steps": 50,
+                            "prompt": _p,
+                            "aspect_ratio": "16:9",
+                            "safety_filter_level": "block_only_high",
+                            "output_format": "jpg",
                         },
                     ),
                 ),

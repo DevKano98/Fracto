@@ -294,7 +294,8 @@ Verdict: {verdict}
 Evidence: {evidence}
 
 Return JSON with:
-title, slug, summary, content, tags
+title, slug, summary, content, tags, image_prompt
+(image_prompt: short visual description for a blog cover image, no text/watermarks)
 """
 
     raw = await _call_gemini(prompt)
@@ -314,4 +315,5 @@ title, slug, summary, content, tags
             "summary": evidence,
             "content": f"{claim}\n\nVerdict: {verdict}\n\n{evidence}",
             "tags": ["fact-check"],
+            "image_prompt": "Indian fact-check journalism illustration newsroom style",
         }
